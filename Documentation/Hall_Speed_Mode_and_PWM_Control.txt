@@ -1,0 +1,665 @@
+odrivetool
+
+odrv0.erase_configuration()
+
+odrv0.config.brake_resistance = 2
+
+odrv0.config.dc_max_positive_current = 15
+
+#odrv0.config.dc_max_negative_current #set at 10mA by default
+
+odrv0.config.max_regen_current = 0
+
+odrv0.save_configuration()
+
+odrv0.axis0.motor.config.pole_pairs = 25
+
+
+odrv0.axis0.motor.config.torque_constant = 8.27/9.38
+
+odrv0.axis0.motor.config.torque_lim = 50
+
+
+odrv0.axis0.motor.config.motor_type = MOTOR_TYPE_PMSM_CURRENT_CONTROL #MOTOR_TYPE_PMSM_VOLTAGE_CONTROL 
+
+odrv0.axis0.motor.config.resistance_calib_max_voltage = 30
+
+odrv0.axis0.motor.config.calibration_current = 8
+
+odrv0.axis0.motor.config.current_lim = 15
+
+odrv0.axis0.motor.config.requested_current_range = 15
+
+odrv0.save_configuration()
+
+odrv0.axis0.encoder.config.mode = ENCODER_MODE_HALL
+
+odrv0.axis0.controller.config.control_mode = CONTROL_MODE_TORQUE_CONTROL #CONTROL_MODE_VELOCITY_CONTROL
+
+odrv0.axis0.encoder.config.cpr = 150
+
+odrv0.axis0.controller.config.pos_gain = 20
+
+odrv0.axis0.controller.config.vel_gain = 0.02
+
+odrv0.axis0.controller.config.vel_integrator_gain = 0.1
+
+odrv0.axis0.controller.config.vel_limit = 100 #7.5 rps <=> 450rpm <=> 45km 20inch
+
+odrv0.axis0.controller.config.torque_ramp_rate = 10
+
+odrv0.save_configuration()
+
+odrv0.axis0.requested_state = AXIS_STATE_MOTOR_CALIBRATION
+
+odrv0.axis0.motor.error #Error = 0
+
+odrv0.axis0.motor.config.pre_calibrated = True
+
+odrv0.save_configuration()
+
+odrv0.axis0.encoder.config.calib_range = 0.3 #0.7 marche
+
+odrv0.axis0.requested_state = AXIS_STATE_ENCODER_OFFSET_CALIBRATION
+
+odrv0.axis0.encoder.error
+
+odrv0.axis0.encoder.config.pre_calibrated = True
+
+odrv0.axis0.requested_state = AXIS_STATE_CLOSED_LOOP_CONTROL
+odrv0.axis0.config.startup_closed_loop_control = True
+
+odrv0.save_configuration()
+
+odrv0.reboot()
+
+odrv0.axis0.controller.input_torque = 5
+
+
+Coupe à 1.2 A sur l'alim => problème avec un paramètre
+Trouver un moyen de calculer le couple du moteur quand appuie sur le frein (surment meilleurs capteur RPM + shunt)
+
+
+odrv0.axis0.controller.input_vel = 5
+
+odrv0.axis0.controller.input_vel = -5
+
+odrv0.config.gpio3_pwm_mapping.min = -20
+
+odrv0.config.gpio3_pwm_mapping.max = 20
+
+odrv0.config.gpio3_pwm_mapping.endpoint = odrv0.axis0.controller._remote_attributes['input_vel']
+
+odrv0.save_configuration()
+
+odrv0.reboot()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+tim@tim-ThinkPad-T14s-Gen-2i:~$ odrivetool
+ODrive control utility v0.6.10.post0
+Website: https://odriverobotics.com/
+Docs: https://docs.odriverobotics.com/
+Forums: https://discourse.odriverobotics.com/
+Discord: https://discord.gg/k3ZZ3mS
+GUI: https://gui.odriverobotics.com/
+
+Please connect your ODrive.
+You can also type help() or quit().
+Tip: You can use `files = !ls *.png`
+
+Connected to ODrive v3.6-56V 3155335C3334 (firmware v0.0.0) as odrv0
+In [1]: odrv0.erase_configuration()
+Oh no odrv0 disappeared
+
+Reconnected to ODrive v3.6-56V 3155335C3334 (firmware v0.0.0) as odrv0
+In [2]: odrv0.config.brake_resistance = 2
+   ...: 
+   ...: odrv0.config.dc_max_positive_current = 15
+   ...: 
+   ...: odrv0.config.dc_max_negative_current
+   ...: 
+   ...: odrv0.config.max_regen_current = 0
+   ...: 
+   ...: odrv0.save_configuration()
+   ...: 
+
+In [3]: odrv0.config.dc_max_negative_current
+Out[3]: -9.999999974752427e-07
+
+In [4]: odrv0.axis0.motor.config.pole_pairs = 25
+   ...: 
+   ...: odrv0.axis0.motor.config.motor_type = MOTOR_TYPE_HIGH_CURRENT
+   ...: 
+   ...: odrv0.axis0.motor.config.resistance_calib_max_voltage = 30
+   ...: 
+   ...: odrv0.axis0.motor.config.calibration_current = 5
+   ...: 
+   ...: odrv0.axis0.motor.config.current_lim = 15
+   ...: 
+   ...: odrv0.axis0.motor.config.requested_current_range = 15
+   ...: 
+   ...: odrv0.save_configuration()
+---------------------------------------------------------------------------
+NameError                                 Traceback (most recent call last)
+Cell In[4], line 3
+      1 odrv0.axis0.motor.config.pole_pairs = 25
+----> 3 odrv0.axis0.motor.config.motor_type = MOTOR_TYPE_HIGH_CURRENT
+      5 odrv0.axis0.motor.config.resistance_calib_max_voltage = 30
+      7 odrv0.axis0.motor.config.calibration_current = 5
+
+NameError: name 'MOTOR_TYPE_HIGH_CURRENT' is not defined
+
+In [5]: odrv0.axis0.motor.config.motor_type = MOTOR_TYPE_PMSM_VOLTAGE_CONTROL
+
+In [6]: odrv0.axis0.motor.config.pole_pairs = 25
+   ...: 
+   ...: odrv0.axis0.motor.config.motor_type = MOTOR_TYPE_PMSM_VOLTAGE_CONTROL #MOTOR_TYPE_HIGH_CURRENT
+   ...: 
+   ...: odrv0.axis0.motor.config.resistance_calib_max_voltage = 30
+   ...: 
+   ...: odrv0.axis0.motor.config.calibration_current = 5
+   ...: 
+   ...: odrv0.axis0.motor.config.current_lim = 15
+   ...: 
+   ...: odrv0.axis0.motor.config.requested_current_range = 15
+   ...: 
+   ...: odrv0.save_configuration()
+
+In [7]: odrv0.axis0.encoder.config.mode = ENCODER_MODE_HALL
+   ...: 
+   ...: odrv0.axis0.controller.config.control_mode = CONTROL_MODE_VELOCITY_CONTROL
+   ...: 
+   ...: odrv0.axis0.encoder.config.cpr = 150
+   ...: 
+   ...: odrv0.axis0.controller.config.pos_gain = 20
+   ...: 
+   ...: odrv0.axis0.controller.config.vel_gain = 0.02
+   ...: 
+   ...: odrv0.axis0.controller.config.vel_integrator_gain = 0.1
+   ...: 
+   ...: odrv0.axis0.controller.config.vel_limit = 100
+   ...: 
+   ...: odrv0.save_configuration()
+
+In [8]: odrv0.axis0.requested_state = AXIS_STATE_MOTOR_CALIBRATION
+
+In [9]: odrv0.axis0.motor
+Out[9]: 
+DC_calib_phB: -2.3625736236572266 (float)
+DC_calib_phC: -2.613579034805298 (float)
+armed_state: 0 (int32)
+config:
+  acim_autoflux_attack_gain: 10.0 (float)
+  acim_autoflux_decay_gain: 1.0 (float)
+  acim_autoflux_enable: False (bool)
+  acim_autoflux_min_Id: 10.0 (float)
+  acim_gain_min_flux: 10.0 (float)
+  acim_slip_velocity: 14.706000328063965 (float)
+  calibration_current: 5.0 (float)
+  current_control_bandwidth: 1000.0 (float)
+  current_lim: 15.0 (float)
+  current_lim_margin: 8.0 (float)
+  direction: 0 (int32)
+  inverter_temp_limit_lower: 100.0 (float)
+  inverter_temp_limit_upper: 120.0 (float)
+  motor_type: 2 (int32)
+  phase_inductance: 0.0 (float)
+  phase_resistance: 0.0 (float)
+  pole_pairs: 25 (int32)
+  pre_calibrated: False (bool)
+  requested_current_range: 15.0 (float)
+  resistance_calib_max_voltage: 30.0 (float)
+  torque_constant: 0.03999999910593033 (float)
+  torque_lim: inf (float)
+current_control:
+  I_measured_report_filter_k: 1.0 (float)
+  Ibus: 0.0 (float)
+  Id_measured: 0.0 (float)
+  Id_setpoint: 0.0 (float)
+  Iq_measured: 0.0 (float)
+  Iq_setpoint: 0.0 (float)
+  acim_rotor_flux: 0.0 (float)
+  async_phase_offset: 0.0 (float)
+  async_phase_vel: 0.0 (float)
+  final_v_alpha: 0.0 (float)
+  final_v_beta: 0.0 (float)
+  i_gain: nan (float)
+  max_allowed_current: 60.75 (float)
+  overcurrent_trip_level: 67.5 (float)
+  p_gain: 0.0 (float)
+  v_current_control_integral_d: 0.0 (float)
+  v_current_control_integral_q: 0.0 (float)
+current_meas_phB: 0.02557063102722168 (float)
+current_meas_phC: 0.03264451026916504 (float)
+effective_current_lim: 10.0 (float)
+error: 0 (int32)
+gate_driver:
+  drv_fault: 0 (int32)
+is_calibrated: True (bool)
+phase_current_rev_gain: 0.02500000037252903 (float)
+timing_log:
+  adc_cb_dc: 12838 (uint16)
+  adc_cb_i: 2710 (uint16)
+  enc_calib: 50322 (uint16)
+  foc_current: 32655 (uint16)
+  foc_voltage: 41488 (uint16)
+  general: 32893 (uint16)
+  idx_search: 16756 (uint16)
+  meas_l: 58489 (uint16)
+  meas_r: 29297 (uint16)
+  sample_now: 8266 (uint16)
+  spi_end: 1033 (uint16)
+  spi_start: 44845 (uint16)
+
+In [10]: odrv0.axis0.motor.config.pre_calibrated = True
+
+In [11]: 
+
+In [11]: odrv0.axis0.encoder.config.calib_range = 0.05
+
+In [12]: odrv0.axis0.requested_state = AXIS_STATE_ENCODER_OFFSET_CALIBRATION
+
+In [13]: odrv0.axis0.encoder
+Out[13]: 
+calib_scan_response: 32.0 (float)
+config:
+  abs_spi_cs_gpio_pin: 1 (uint16)
+  bandwidth: 1000.0 (float)
+  calib_range: 0.05000000074505806 (float)
+  calib_scan_distance: 50.26548385620117 (float)
+  calib_scan_omega: 12.566370964050293 (float)
+  cpr: 150 (int32)
+  enable_phase_interpolation: True (bool)
+  find_idx_on_lockin_only: False (bool)
+  idx_search_unidirectional: False (bool)
+  ignore_illegal_hall_state: False (bool)
+  mode: 1 (int32)
+  offset: 0 (int32)
+  offset_float: 0.0 (float)
+  pre_calibrated: False (bool)
+  sincos_gpio_pin_cos: 4 (uint16)
+  sincos_gpio_pin_sin: 3 (uint16)
+  use_index: False (bool)
+  zero_count_on_find_idx: True (bool)
+count_in_cpr: 30 (int32)
+error: 2 (int32)
+hall_state: 6 (uint8)
+index_found: False (bool)
+interpolation: 0.5 (float)
+is_ready: False (bool)
+phase: 0.52359938621521 (float)
+pos_abs: 0 (int32)
+pos_circular: 0.20502609014511108 (float)
+pos_cpr: 0.20500001311302185 (float)
+pos_cpr_counts: 30.750001907348633 (float)
+pos_estimate: 0.20500001311302185 (float)
+pos_estimate_counts: 30.750001907348633 (float)
+set_linear_count(count: int32)
+shadow_count: 30 (int32)
+spi_error_rate: 0.0 (float)
+vel_estimate: 0.0 (float)
+vel_estimate_counts: 0.0 (float)
+
+In [14]: odrv0.axis0.encoder.config.calib_range = 0.1
+
+In [15]: odrv0.axis0.requested_state = AXIS_STATE_ENCODER_OFFSET_CALIBRATION
+
+In [16]: odrv0.axis0.encoder
+Out[16]: 
+calib_scan_response: 32.0 (float)
+config:
+  abs_spi_cs_gpio_pin: 1 (uint16)
+  bandwidth: 1000.0 (float)
+  calib_range: 0.10000000149011612 (float)
+  calib_scan_distance: 50.26548385620117 (float)
+  calib_scan_omega: 12.566370964050293 (float)
+  cpr: 150 (int32)
+  enable_phase_interpolation: True (bool)
+  find_idx_on_lockin_only: False (bool)
+  idx_search_unidirectional: False (bool)
+  ignore_illegal_hall_state: False (bool)
+  mode: 1 (int32)
+  offset: 0 (int32)
+  offset_float: 0.0 (float)
+  pre_calibrated: False (bool)
+  sincos_gpio_pin_cos: 4 (uint16)
+  sincos_gpio_pin_sin: 3 (uint16)
+  use_index: False (bool)
+  zero_count_on_find_idx: True (bool)
+count_in_cpr: 30 (int32)
+error: 2 (int32)
+hall_state: 6 (uint8)
+index_found: False (bool)
+interpolation: 0.5 (float)
+is_ready: False (bool)
+phase: 0.52359938621521 (float)
+pos_abs: 0 (int32)
+pos_circular: 0.20502609014511108 (float)
+pos_cpr: 0.20500001311302185 (float)
+pos_cpr_counts: 30.750001907348633 (float)
+pos_estimate: 0.20500001311302185 (float)
+pos_estimate_counts: 30.750001907348633 (float)
+set_linear_count(count: int32)
+shadow_count: 30 (int32)
+spi_error_rate: 0.0 (float)
+vel_estimate: 0.0 (float)
+vel_estimate_counts: 0.0 (float)
+
+In [17]: odrv0.axis0.encoder.config.calib_range = 0.1
+
+In [18]: odrv0.reboot()
+Oh no odrv0 disappeared
+
+Reconnected to ODrive v3.6-56V 3155335C3334 (firmware v0.0.0) as odrv0
+In [19]: odrv0.axis0.encoder.config.calib_range = 0.1
+
+In [20]: odrv0.axis0.encoder.config.calib_range
+Out[20]: 0.10000000149011612
+
+In [21]: odrv0.axis0.requested_state = AXIS_STATE_ENCODER_OFFSET_CALIBRATION
+
+In [22]: odrv0.axis0.requested_state = AXIS_STATE_ENCODER_OFFSET_CALIBRATION
+
+In [23]: odrv0.axis0.encoder.config.calib_range = 0.7
+
+In [24]: odrv0.axis0.requested_state = AXIS_STATE_ENCODER_OFFSET_CALIBRATION
+
+    ...: odrv0.config.dc_max_negative_current
+    ...: 
+    ...: odrv0.config.max_regen_current = 0
+    ...: 
+    ...: odrv0.save_configuration()
+    ...: 
+    ...: odrv0.axis0.motor.config.pole_pairs = 25
+    ...: 
+    ...: odrv0.axis0.motor.config.motor_type = MOTOR_TYPE_PMSM_VOLTAGE_CONTROL #MOTOR_TYPE_HIGH_CURRENT
+    ...: 
+    ...: odrv0.axis0.motor.config.resistance_calib_max_voltage = 30
+    ...: 
+    ...: odrv0.axis0.motor.config.calibration_current = 8
+    ...: 
+    ...: odrv0.axis0.motor.config.current_lim = 15
+    ...: 
+    ...: odrv0.axis0.motor.config.requested_current_range = 15
+    ...: 
+    ...: odrv0.save_configuration()
+    ...: 
+    ...: odrv0.axis0.encoder.config.mode = ENCODER_MODE_HALL
+    ...: 
+    ...: odrv0.axis0.controller.config.control_mode = CONTROL_MODE_VELOCITY_CONTROL
+    ...: 
+    ...: odrv0.axis0.encoder.config.cpr = 150
+    ...: 
+    ...: odrv0.axis0.controller.config.pos_gain = 20
+    ...: 
+    ...: odrv0.axis0.controller.config.vel_gain = 0.02
+    ...: 
+    ...: odrv0.axis0.controller.config.vel_integrator_gain = 0.1
+    ...: 
+    ...: odrv0.axis0.controller.config.vel_limit = 100
+    ...: 
+    ...: odrv0.save_configuration()
+
+In [26]: odrv0.axis0.requested_state = AXIS_STATE_MOTOR_CALIBRATION
+
+In [27]: odrv0.axis0.motor
+Out[27]: 
+DC_calib_phB: -1.587135672569275 (float)
+DC_calib_phC: -1.7749383449554443 (float)
+armed_state: 0 (int32)
+config:
+  acim_autoflux_attack_gain: 10.0 (float)
+  acim_autoflux_decay_gain: 1.0 (float)
+  acim_autoflux_enable: False (bool)
+  acim_autoflux_min_Id: 10.0 (float)
+  acim_gain_min_flux: 10.0 (float)
+  acim_slip_velocity: 14.706000328063965 (float)
+  calibration_current: 8.0 (float)
+  current_control_bandwidth: 1000.0 (float)
+  current_lim: 15.0 (float)
+  current_lim_margin: 8.0 (float)
+  direction: 0 (int32)
+  inverter_temp_limit_lower: 100.0 (float)
+  inverter_temp_limit_upper: 120.0 (float)
+  motor_type: 2 (int32)
+  phase_inductance: 0.0 (float)
+  phase_resistance: 0.0 (float)
+  pole_pairs: 25 (int32)
+  pre_calibrated: False (bool)
+  requested_current_range: 15.0 (float)
+  resistance_calib_max_voltage: 30.0 (float)
+  torque_constant: 0.03999999910593033 (float)
+  torque_lim: inf (float)
+current_control:
+  I_measured_report_filter_k: 1.0 (float)
+  Ibus: 0.0 (float)
+  Id_measured: 0.0 (float)
+  Id_setpoint: 0.0 (float)
+  Iq_measured: 0.0 (float)
+  Iq_setpoint: 0.0 (float)
+  acim_rotor_flux: 0.0 (float)
+  async_phase_offset: 0.0 (float)
+  async_phase_vel: 0.0 (float)
+  final_v_alpha: 0.0 (float)
+  final_v_beta: 0.0 (float)
+  i_gain: nan (float)
+  max_allowed_current: 30.375 (float)
+  overcurrent_trip_level: 33.75 (float)
+  p_gain: 0.0 (float)
+  v_current_control_integral_d: 0.0 (float)
+  v_current_control_integral_q: 0.0 (float)
+current_meas_phB: 0.01531672477722168 (float)
+current_meas_phC: 0.08204066753387451 (float)
+effective_current_lim: 10.0 (float)
+error: 0 (int32)
+gate_driver:
+  drv_fault: 0 (int32)
+is_calibrated: True (bool)
+phase_current_rev_gain: 0.012500000186264515 (float)
+timing_log:
+  adc_cb_dc: 12842 (uint16)
+  adc_cb_i: 2598 (uint16)
+  enc_calib: 8078 (uint16)
+  foc_current: 32655 (uint16)
+  foc_voltage: 8018 (uint16)
+  general: 32893 (uint16)
+  idx_search: 16756 (uint16)
+  meas_l: 58489 (uint16)
+  meas_r: 29297 (uint16)
+  sample_now: 8266 (uint16)
+  spi_end: 1033 (uint16)
+  spi_start: 44845 (uint16)
+
+In [28]: odrv0.axis0.motor.config.pre_calibrated = True
+
+In [29]: odrv0.axis0.encoder.config.calib_range = 0.7
+
+In [30]: odrv0.axis0.requested_state = AXIS_STATE_ENCODER_OFFSET_CALIBRATION
+
+In [31]: odrv0.axis0.encoder
+Out[31]: 
+calib_scan_response: 48.0 (float)
+config:
+  abs_spi_cs_gpio_pin: 1 (uint16)
+  bandwidth: 1000.0 (float)
+  calib_range: 0.699999988079071 (float)
+  calib_scan_distance: 50.26548385620117 (float)
+  calib_scan_omega: 12.566370964050293 (float)
+  cpr: 150 (int32)
+  enable_phase_interpolation: True (bool)
+  find_idx_on_lockin_only: False (bool)
+  idx_search_unidirectional: False (bool)
+  ignore_illegal_hall_state: False (bool)
+  mode: 1 (int32)
+  offset: 165 (int32)
+  offset_float: 0.5136406421661377 (float)
+  pre_calibrated: False (bool)
+  sincos_gpio_pin_cos: 4 (uint16)
+  sincos_gpio_pin_sin: 3 (uint16)
+  use_index: False (bool)
+  zero_count_on_find_idx: True (bool)
+count_in_cpr: 141 (int32)
+error: 0 (int32)
+hall_state: 6 (uint8)
+index_found: False (bool)
+interpolation: 0.5 (float)
+is_ready: True (bool)
+phase: -0.014284849166870117 (float)
+pos_abs: 0 (int32)
+pos_circular: 0.9415906667709351 (float)
+pos_cpr: 0.9415625333786011 (float)
+pos_cpr_counts: 141.234375 (float)
+pos_estimate: 0.9415625333786011 (float)
+pos_estimate_counts: 141.234375 (float)
+set_linear_count(count: int32)
+shadow_count: 141 (int32)
+spi_error_rate: 0.0 (float)
+vel_estimate: 0.0 (float)
+vel_estimate_counts: 0.0 (float)
+
+In [32]: odrv0.axis0.encoder.config.pre_calibrated = True
+
+In [33]: odrv0.axis0.requested_state = AXIS_STATE_CLOSED_LOOP_CONTROL
+
+In [34]: odrv0.axis0.requested_state
+Out[34]: 0
+
+In [35]: odrv0.axis0.config.startup_closed_loop_control = True
+
+In [36]: odrv0.save_configuration()
+
+In [37]: odrv0.reboot()
+Oh no odrv0 disappeared
+
+Reconnected to ODrive v3.6-56V 3155335C3334 (firmware v0.0.0) as odrv0
+In [38]: odrv0.axis0.controller.input_vel = 5
+
+In [39]: odrv0.axis0.controller.input_vel = 0
+
+In [40]: odrv0.axis0.controller.input_vel = -1
+
+In [41]: odrv0.axis0.controller.input_vel = 5
+
+In [42]: odrv0.reboot()
+Oh no odrv0 disappeared
+
+Reconnected to ODrive v3.6-56V 3155335C3334 (firmware v0.0.0) as odrv0
+In [43]: odrv0.axis0.controller.input_vel = -5
+
+In [44]: odrv0.axis0.controller.input_vel = 0
+
+In [45]: odrv0.axis0.controller.input_vel = 5
+
+In [46]: odrv0.axis0.controller.input_vel = 5
+
+In [47]: odrv0.reboot()
+Oh no odrv0 disappeared
+
+Reconnected to ODrive v3.6-56V 3155335C3334 (firmware v0.0.0) as odrv0
+In [48]: odrv0.axis0.controller.input_vel = 5
+
+In [49]: odrv0.axis0.controller.input_vel = 3
+
+In [50]: odrv0.axis0.controller.input_vel = 1
+
+In [51]: odrv0.axis0.controller.input_vel = 0
+
+In [52]: odrv0.axis0.controller.input_vel = 1
+
+In [53]: odrv0.axis0.controller.input_vel = 0
+
+In [54]: odrv0.axis0.controller.input_torque = 1
+
+In [55]: odrv0.axis0.controller.input_torque = 0
+
+In [56]: odrv0.axis0.controller.input_torque = 0.1
+
+In [57]: odrv0.axis0.controller.input_torque = 0.3
+
+In [58]: odrv0.axis0.controller.input_torque = 0.5
+
+In [59]: odrv0.axis0.controller.input_torque = 0.8
+
+In [60]: odrv0.axis0.controller.input_vel = 1
+
+In [61]: odrv0.axis0.controller.input_vel = 3
+
+In [62]: odrv0.axis0.controller.input_vel = 0
+
+In [63]: odrv0.axis0.controller.input_vel = 0
+
+Oh no odrv0 disappeared
+Reconnected to ODrive v3.6-56V 3155335C3334 (firmware v0.0.0) as odrv0
+In [64]: odrv0.axis0.controller.input_vel = 1
+
+In [65]: odrv0.axis0.controller.input_vel = 10
+
+In [66]: odrv0.axis0.controller.input_vel = 0
+
+In [67]: odrv0.axis0.controller.input_vel = 1
+
+In [68]: odrv0.axis0.controller.input_vel = 1
+
+In [69]: odrv0.reboot()
+Oh no odrv0 disappeared
+
+Reconnected to ODrive v3.6-56V 3155335C3334 (firmware v0.0.0) as odrv0
+In [70]: odrv0.axis0.controller.input_vel = 1
+
+In [71]: odrv0.axis0.controller.input_vel = 0
+
+Oh no odrv0 disappeared
+In [72]: odrv0.axis0.controller.input_vel = 1
+
+Reconnected to ODrive v3.6-56V 3155335C3334 (firmware v0.0.0) as odrv0
+In [73]: odrv0.axis0.controller.input_vel = 1
+
+In [74]: odrv0.axis0.controller.input_vel = 10
+
+In [75]: odrv0.axis0.controller.input_vel = 15
+
+In [76]: odrv0.axis0.controller.input_vel = 20
+
+In [77]: odrv0.axis0.controller.input_vel = 0
+
+In [78]: odrv0.axis0.controller.input_torque = 5
+
+In [79]: odrv0.reboot()
+Oh no odrv0 disappeared
+
+Reconnected to ODrive v3.6-56V 3155335C3334 (firmware v0.0.0) as odrv0
+In [80]: odrv0.axis0.controller.input_torque = 5
+
+In [81]: odrv0.axis0.controller.input_torque = 6
+
+Oh no odrv0 disappeared
+Reconnected to ODrive v3.6-56V 3155335C3334 (firmware v0.0.0) as odrv0
+In [82]: odrv0.axis0.controller.input_torque = 6
+
+In [83]: odrv0.axis0.controller.input_torque = 0
+
+Oh no odrv0 disappeared
+In [84]: Docs: https://docs.odriverobotics.com/
+    ...: Forums: https://discourse.odriverobotics.com/
+    ...: Discord: https://discord.gg/k3ZZ3mS
+    ...: GUI: https://gui.odriverobotics.com/
+    ...: 
+
+
