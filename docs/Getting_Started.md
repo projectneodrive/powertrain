@@ -6,9 +6,8 @@ bus before. It walks you all the way from "I have a board and an ST‑Link" to
 
 **What the board is:** an ODrive v3.6 clone (MKS single‑channel) with an
 STM32F405 micro‑controller and a DRV8301 gate driver. Instead of the stock ODrive
-firmware it runs our custom **SimpleFOC + FreeRTOS** firmware
-([`Neodrive_test/`](../Neodrive_test/)), which speaks the **ODrive CANSimple**
-protocol.
+firmware it runs our custom **SimpleFOC + FreeRTOS** firmware (this repository),
+which speaks the **ODrive CANSimple** protocol.
 
 ---
 
@@ -36,7 +35,7 @@ protocol.
 | BLDC motor | + a quadrature encoder **or** hall sensors |
 | Power supply | ~24 V bench PSU (current‑limited is safest for first tests) |
 | USB cable | Micro‑USB to the board, for the serial monitor |
-| For CAN: | a USB‑CAN adapter **or** an Arduino Uno/Nano + MCP2515 module |
+| For CAN: | a USB‑CAN adapter **or** an Arduino Uno/Nano/ESP32 + MCP2515 module |
 | 2× 120 Ω resistors | CAN bus termination |
 
 ![Board + ST-Link overview](images/board_overview.png)
@@ -45,9 +44,11 @@ protocol.
 > on the bench.)
 
 ### A word on safety
-The firmware **spins the motor on boot** (a gentle 0.8 V) and **twitches it during
-calibration**. Always mount/hold the motor and keep the PSU current‑limited
-(1–2 A) for first tests.
+The firmware boots in a **safe, disarmed state** — the driver is off and the
+motor is free; it does **nothing** until you arm it. Arming (over CAN, or the
+serial `A` command) runs a one‑time **calibration** that briefly energises and
+**twitches the motor**, so keep it free/mounted when you first arm, and keep the
+PSU current‑limited (1–2 A) for first tests.
 
 ---
 
@@ -70,7 +71,7 @@ compiler and libraries for you automatically.
 > "PlatformIO IDE" extension page in VS Code's Extensions panel.
 
 4. **Open the project:** in VS Code → *File → Open Folder…* and select the
-   **`Neodrive_test`** folder (the one containing `platformio.ini`). PlatformIO
+   **repository root** folder (the one containing `platformio.ini`). PlatformIO
    detects it and, on the first build, downloads:
    - the `ststm32` platform + Arduino framework + ARM GCC toolchain,
    - the libraries in `platformio.ini` (SimpleFOC, SimpleFOCDrivers, STM32
@@ -108,13 +109,13 @@ On the ODrive v3.6 the SWD pins are on the small debug header near the STM32.
 
 ## 4. Build & flash the firmware
 
-With the `Neodrive_test` folder open in VS Code, use the PlatformIO toolbar at
+With the project (repository root) open in VS Code, use the PlatformIO toolbar at
 the bottom of the window:
 
 - **Build** (the ✓ checkmark) — compiles. First time is slow (downloads).
 - **Upload** (the → arrow) — compiles **and** flashes over the ST‑Link.
 
-Or from a terminal in the `Neodrive_test` folder:
+Or from a terminal in the repository root:
 ```bash
 pio run              # build only
 pio run -t upload    # build + flash via ST-Link
@@ -134,22 +135,24 @@ A successful upload ends with something like `Programming Complete!` /
 1. Plug the board's **USB** into your PC (separate from the ST‑Link).
 2. Open the **Serial Monitor**: PlatformIO toolbar 🔌 icon, or
    `pio device monitor -b 115200`.
-3. On boot you should see:
+3. On boot you should see it come up **disarmed / safe** (no motion):
    ```
    --- SimpleFOC + FreeRTOS + CANSimple ---
-   Calibrating (initFOC)... keep the motor free.
-   initFOC OK | dir=CW zero_elec=...
    CAN up: node 0 @ 100000 bps
-   Scheduler starting @ Uq=0.80 V. Console: T<Nm/V>, V<rad/s>, C(clear).
-   t=... #0 mode=1 tgt=0.80 vel=... Vbus=... ARM
+   SAFE state (disarmed). Arm to calibrate + run:
+     CAN: Set_Axis_State(8)   or   serial: A
+   t=... #0 mode=1 tgt=0.00 vel=0.00 Vbus=... SAFE
    ```
-   The motor twitches during calibration, then spins slowly (0.8 V torque).
+   The status word at the end of each line is `SAFE` (never armed) → `RUN`
+   (armed & running) → `idle` (calibrated but disarmed) → `[FAULT]`.
 
-4. **Quick keyboard console** (type in the monitor + Enter):
+4. **Arm it to make it move.** Arming runs a one‑time calibration (the motor
+   twitches, so keep it free), then enters closed loop:
+   - `A` → arm (equivalent to CAN `Set_Axis_State(8)`)
    - `V10` → velocity mode, 10 rad/s
    - `T0.8` → torque mode, 0.8 (volts for now — becomes Nm once current sensing
      is added)
-   - `C` → clear a latched fault
+   - `I` → disarm (back to safe) &nbsp; `C` → clear a latched fault
 
 > The steady `#N` counter proves the real‑time scheduler is healthy — it keeps a
 > fixed 10 Hz cadence even while the motor spins fast (this is the bug we fixed
@@ -311,7 +314,8 @@ so odrivetool and existing ODrive CAN tools work unchanged.
 ---
 
 ### See also
-- Firmware source: [`Neodrive_test/`](../Neodrive_test/) — `src/main.cpp`,
-  `include/board_config.h`, `lib/odrive_can/`.
+- Firmware source: [`src/main.cpp`](../src/main.cpp),
+  [`include/board_config.h`](../include/board_config.h),
+  [`lib/odrive_can/`](../lib/odrive_can/).
 - ODrive CANSimple reference:
   [ODrive CAN guide](https://docs.odriverobotics.com/v/latest/guides/can-guide.html).

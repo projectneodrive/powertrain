@@ -14,27 +14,38 @@ install the toolchain, flash the board with an ST‑Link, and drive it over CAN
 
 ## Repository layout
 
+The PlatformIO firmware project **is the repository root**.
+
 | Path | What it is |
 |------|-----------|
-| [`Neodrive_test/`](Neodrive_test/) | **The firmware** (PlatformIO). `src/main.cpp`, `include/board_config.h`, `lib/odrive_can/` (CANSimple layer). |
+| [`platformio.ini`](platformio.ini), [`src/`](src/), [`include/`](include/), [`lib/`](lib/) | **The firmware.** `src/main.cpp` (FreeRTOS tasks + axis state machine), `include/board_config.h` (pins / limits / timing), `lib/odrive_can/` (CANSimple protocol layer). |
+| [`test/`](test/) | Standalone bench sketches (raw encoder read, open‑loop, closed‑loop) — **not** part of the main build. |
 | [`CAN/`](CAN/) | CAN tooling: the ODrive CANSimple **DBC generator** (`create_can_dbc.py`) and an **Arduino CAN sender** example (`arduino_can_sender/`). |
 | [`docs/`](docs/) | Documentation (start with `Getting_Started.md`). |
-| [`Documentation/`](Documentation/) | Notes/recipes for the **stock ODrive** firmware (hall & sensorless config). |
-| [`Odrive_configuration_power_supply_V1.py`](Odrive_configuration_power_supply_V1.py) | Interactive host script to configure a stock ODrive (hall, torque mode). |
 
 ## Firmware status
 
 - ✅ Hardware‑timer encoder (fixes the FreeRTOS scheduler starvation from the old
   software‑interrupt encoder)
 - ✅ FreeRTOS task architecture (20 kHz FOC loop, safety, CAN, telemetry)
+- ✅ Safe‑state boot: disarmed until a CAN `Set_Axis_State(CLOSED_LOOP)` (or serial `A`)
 - ✅ ODrive CANSimple interface — torque / velocity / position, switchable at
   runtime; heartbeat + telemetry
-- ⏳ Phase‑current sensing (DRV8301 + low‑side shunts) for true Nm torque
-- ⏳ Runtime‑selectable hall / quadrature / sensorless sensing
-- ⏳ Config persistence to flash
+
+### What SimpleFOC does today
+
+| Feature | Status |
+|---------|--------|
+| Sensor **offset + direction autocalibration** (`initFOC`, runs on arm) | ✅ (not yet persisted → re‑runs each power‑up) |
+| Velocity control (PID) / position control (P) / torque (voltage) | ✅ |
+| **Motor R/L autocalibration** (phase resistance/inductance) | ❌ (needs current sensing — Phase 4) |
+| **Phase‑current sensing** → true Nm torque + current limiting | ❌ (Phase 4) |
+| **Hall** sensor support | ❌ active — only the HW quadrature encoder is wired (Phase 5) |
+| **Sensorless** (BEMF/flux observer) | ❌ (Phase 7; SimpleFOC has no built‑in observer) |
+| Config / calibration **persistence to flash** | ❌ (Phase 5/6b) |
 
 ## Hardware quick facts
 
 STM32F405RGT6 @ 168 MHz · DRV8301 6‑PWM (TIM1) · encoder/hall PB4/PB5(/PC9) ·
 DRV SPI3 CS PC13 · phase current PC0/PC1 · Vbus PA6 · CAN1 PB8/PB9. Full pin map
-in [`Neodrive_test/include/board_config.h`](Neodrive_test/include/board_config.h).
+in [`include/board_config.h`](include/board_config.h).

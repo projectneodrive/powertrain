@@ -2,7 +2,7 @@
  *  arduino_can_sender.ino
  *  Example CAN master for the SimpleFOC / MKS-ODrive board.
  *  Speaks the ODrive "CANSimple" protocol, so it works with the firmware in
- *  this repo (Neodrive_test) and with a stock ODrive.
+ *  this repo and with a stock ODrive.
  *
  *  HARDWARE
  *    Arduino Uno / Nano  +  MCP2515 CAN module (blue board, 8 MHz or 16 MHz).
@@ -107,7 +107,8 @@ void setup() {
 
   clearErrors();                        // start from a clean state
   setLimits(10.0f, 15.0f);             // 10 rev/s max, 15 A max
-  setAxisState(AXIS_CLOSED_LOOP);       // arm (this board also boots armed)
+  setAxisState(AXIS_CLOSED_LOOP);       // arm: the board boots SAFE and needs this
+  delay(2000);                          // let the one-time arm calibration finish
   setControllerMode(CTRL_VELOCITY, INPUT_PASSTHROUGH);
   setInputVel(2.0f);                    // spin at 2 rev/s
 }

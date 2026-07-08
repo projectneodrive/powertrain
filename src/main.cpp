@@ -1,19 +1,24 @@
 // ============================================================================
 //  SimpleFOC + FreeRTOS + ODrive CANSimple  —  ODrive v3.6 (MKS clone) / F405
 //
+//  SAFE-STATE BOOT: the board powers up DISARMED — driver off, motor free, zero
+//  torque, no calibration motion. It does NOTHING until it is armed by a CAN
+//  Set_Axis_State(CLOSED_LOOP) (or the serial 'A' command). On the first arm it
+//  runs sensor calibration (initFOC), then enters closed loop. Disarming, an
+//  E-stop, or a DRV8301 fault immediately drops back to the safe state.
+//
 //  Tasks:
-//   * FOCTask     (prio 4): woken by a 20 kHz TIM6 tick; loopFOC() every tick,
-//                  move() every 20th (1 kHz). STM32HWEncoder (TIM3) = no EXTI,
-//                  which is what fixed the scheduler starvation.
-//   * SafetyTask  (prio 5): polls DRV8301 nFAULT, hardware-cuts EN_GATE.
-//   * CommsTask   (prio 3): drains CAN @1 kHz, applies setpoints/mode/arming +
-//                  watchdog, publishes telemetry, sends cyclic CAN frames.
-//   * SerialTask  (prio 2): USB-CDC debug + a tiny command console.
+//   * FOCTask   (prio 4): woken by a 20 kHz TIM6 tick; runs loopFOC()+move()
+//                ONLY while g_focReady (armed & calibrated). STM32HWEncoder
+//                (TIM3) => no EXTI => no scheduler starvation.
+//   * SafetyTask(prio 5): polls DRV8301 nFAULT, hardware-cuts EN_GATE.
+//   * CommsTask (prio 3): drains CAN @1 kHz, runs the axis state machine
+//                (arm/calibrate/disarm) + watchdog, publishes telemetry, sends
+//                cyclic CAN frames.
+//   * SerialTask(prio 2): USB-CDC debug + a tiny command console.
 //
-//  Control modes are switchable at runtime over CAN (Set_Controller_Mode):
-//   torque (voltage until Phase 4 current sensing) / velocity / position.
-//
-//  Serial console (115200):  T<Nm|V>  torque   V<rad/s>  velocity   C  clear
+//  Serial console (115200): A=arm  I=idle/disarm  V<rad/s>=velocity
+//                           T<Nm/V>=torque  C=clear errors
 // ============================================================================
 #include <Arduino.h>
 #include <SimpleFOC.h>
@@ -67,7 +72,8 @@ OdriveCAN      g_can(g_io);     // CANSimple interface (CAN1 PB8/PB9)
 // ============================================================================
 volatile float        g_active_target = 0.0f;   // consumed by move() in FOCTask
 volatile bool         g_fault         = false;   // DRV8301 hardware fault latch
-static   bool         g_motorArmed    = false;   // reflects motor.enable() state
+volatile bool         g_focReady      = false;   // FOCTask may drive (armed+calibrated)
+static   bool         g_calibrated    = false;   // initFOC has succeeded once
 static   TaskHandle_t g_focTask       = nullptr;
 static   HardwareTimer *g_focTimer    = nullptr;
 
@@ -88,7 +94,7 @@ static float readVbus() {
   return (float)analogRead(PIN_VBUS) * (3.3f / 4095.0f) * CFG_VBUS_DIV;
 }
 
-// Bridge the CAN command block onto SimpleFOC. Runs at 1 kHz in CommsTask.
+// Axis state machine + command bridge. Runs at 1 kHz in CommsTask.
 static void applyControl() {
   uint32_t now = millis();
 
@@ -102,42 +108,64 @@ static void applyControl() {
     g_io.axis_error = 0;
   }
 
-  // --- arming: require CAN-armed, no estop, no hardware fault ---
-  bool want = g_io.armed && !g_io.estop && !g_fault &&
-              (digitalRead(PIN_N_FAULT) == HIGH);
-  if (want && !g_motorArmed) { motor.enable();  g_motorArmed = true; }
-  if (!want && g_motorArmed) { motor.disable(); g_motorArmed = false; }
+  bool safe = !g_io.estop && !g_fault && (digitalRead(PIN_N_FAULT) == HIGH);
+  bool want = g_io.armed && safe;
 
-  // --- control mode + target (runtime switchable via Set_Controller_Mode) ---
-  switch (g_io.control_mode) {
-    case CTRL_VELOCITY:
-      motor.controller = MotionControlType::velocity;
-      g_active_target  = g_io.input_vel;                    // rad/s
-      break;
-    case CTRL_POSITION:
-      motor.controller = MotionControlType::angle;
-      g_active_target  = g_io.input_pos;                    // rad
-      break;
-    case CTRL_TORQUE:
-    case CTRL_VOLTAGE:
-    default:
-      motor.controller        = MotionControlType::torque;
-      motor.torque_controller = TorqueControlType::voltage; // Phase 4 -> foc_current
-      g_active_target         = g_io.input_torque;          // Nm read as Uq(V) for now
-      break;
+  // --- DISARM: return to the safe state ---
+  if (!want && g_focReady) {
+    g_focReady = false;
+    g_active_target = 0.0f;
+    motor.disable();
   }
 
-  if (g_io.vel_limit > 0.0f) motor.velocity_limit = g_io.vel_limit;
-  if (g_io.pos_gain  > 0.0f) motor.P_angle.P      = g_io.pos_gain;
-
-  // --- CAN watchdog (disabled when CFG_WATCHDOG_MS == 0) ---
-  if (CFG_WATCHDOG_MS > 0 && g_motorArmed &&
-      (now - g_io.last_setpoint_ms) > CFG_WATCHDOG_MS) {
-    g_io.axis_error |= ERR_WATCHDOG_EXPIRED;
-    g_io.armed = false;
+  // --- ARM: calibrate on first arm, then enable closed loop ---
+  //  g_focReady is still false here, so FOCTask stays idle while initFOC()
+  //  (which drives the motor itself) runs uninterrupted.
+  if (want && !g_focReady) {
+    motor.enable();
+    if (!g_calibrated) {
+      if (motor.initFOC()) {
+        g_calibrated = true;
+      } else {
+        g_io.axis_error |= ERR_ENCODER_FAILED;   // alignment failed
+        g_io.armed = false;
+        motor.disable();
+        return;
+      }
+    }
+    g_focReady = true;
   }
 
-  if (!g_motorArmed) g_active_target = 0.0f;
+  // --- while running: apply mode / target / limits / watchdog ---
+  if (g_focReady) {
+    switch (g_io.control_mode) {
+      case CTRL_VELOCITY:
+        motor.controller = MotionControlType::velocity;
+        g_active_target  = g_io.input_vel;                    // rad/s
+        break;
+      case CTRL_POSITION:
+        motor.controller = MotionControlType::angle;
+        g_active_target  = g_io.input_pos;                    // rad
+        break;
+      case CTRL_TORQUE:
+      case CTRL_VOLTAGE:
+      default:
+        motor.controller        = MotionControlType::torque;
+        motor.torque_controller = TorqueControlType::voltage; // Phase 4 -> foc_current
+        g_active_target         = g_io.input_torque;          // Nm read as Uq(V) for now
+        break;
+    }
+    if (g_io.vel_limit > 0.0f) motor.velocity_limit = g_io.vel_limit;
+    if (g_io.pos_gain  > 0.0f) motor.P_angle.P      = g_io.pos_gain;
+
+    if (CFG_WATCHDOG_MS > 0 &&
+        (now - g_io.last_setpoint_ms) > CFG_WATCHDOG_MS) {
+      g_io.axis_error |= ERR_WATCHDOG_EXPIRED;
+      g_io.armed = false;                        // -> disarm next iteration
+    }
+  } else {
+    g_active_target = 0.0f;
+  }
 }
 
 static void publishTelemetry() {
@@ -147,7 +175,7 @@ static void publishTelemetry() {
   g_io.iq_measured = 0.0f;
   g_io.vbus        = readVbus();
   g_io.ibus        = 0.0f;
-  g_io.cur_state   = g_motorArmed ? AXIS_CLOSED_LOOP : AXIS_IDLE;
+  g_io.cur_state   = g_focReady ? AXIS_CLOSED_LOOP : AXIS_IDLE;
 }
 
 // ============================================================================
@@ -163,7 +191,7 @@ static void FOCTask(void *) {
 
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);     // block until next 20 kHz tick
-    if (g_fault) continue;
+    if (!g_focReady || g_fault) continue;        // disarmed/faulted => idle
     motor.loopFOC();
     motor.move(g_active_target);
   }
@@ -185,7 +213,7 @@ static void SafetyTask(void *) {
 }
 
 // ============================================================================
-//  CommsTask — CAN drain + control bridge + telemetry (1 kHz)
+//  CommsTask — CAN drain + state machine + telemetry (1 kHz)
 // ============================================================================
 static void CommsTask(void *) {
   TickType_t last = xTaskGetTickCount();
@@ -211,8 +239,13 @@ static void handleSerial() {
       if (idx > 0) {
         float v = atof(buf + 1);
         switch (buf[0]) {
+          case 'A': case 'a':                    // arm (like Set_Axis_State(8))
+            g_io.estop = false; g_io.armed = true;
+            g_io.last_setpoint_ms = millis(); break;
+          case 'I': case 'i':                    // idle / disarm
+            g_io.armed = false; break;
           case 'T': case 't':
-            g_io.control_mode = CTRL_TORQUE; g_io.input_torque = v;
+            g_io.control_mode = CTRL_TORQUE;   g_io.input_torque = v;
             g_io.last_setpoint_ms = millis(); break;
           case 'V': case 'v':
             g_io.control_mode = CTRL_VELOCITY; g_io.input_vel = v;
@@ -233,20 +266,20 @@ static void SerialTask(void *) {
   TickType_t last = xTaskGetTickCount();
   for (;;) {
     handleSerial();
-    Serial.print("t=");    Serial.print(millis());
-    Serial.print(" #");    Serial.print(beat++);
-    Serial.print(" mode="); Serial.print(g_io.control_mode);
-    Serial.print(" tgt=");  Serial.print(g_active_target, 2);
-    Serial.print(" vel=");  Serial.print(motor.shaft_velocity, 2);
-    Serial.print(" Vbus="); Serial.print(g_io.vbus, 1);
-    Serial.print(g_motorArmed ? " ARM" : " off");
+    Serial.print("t=");     Serial.print(millis());
+    Serial.print(" #");     Serial.print(beat++);
+    Serial.print(" mode=");  Serial.print(g_io.control_mode);
+    Serial.print(" tgt=");   Serial.print(g_active_target, 2);
+    Serial.print(" vel=");   Serial.print(motor.shaft_velocity, 2);
+    Serial.print(" Vbus=");  Serial.print(g_io.vbus, 1);
+    Serial.print(g_focReady ? " RUN" : (g_calibrated ? " idle" : " SAFE"));
     Serial.println(g_fault ? " [FAULT]" : "");
     vTaskDelayUntil(&last, pdMS_TO_TICKS(100));
   }
 }
 
 // ============================================================================
-//  setup — bring-up + calibration BEFORE the scheduler starts
+//  setup — configure only; DO NOT enable/calibrate/spin. Wait for arm.
 // ============================================================================
 void setup() {
   pinMode(PIN_M0_CS, OUTPUT); digitalWrite(PIN_M0_CS, HIGH);   // DRV SPI silent
@@ -254,9 +287,11 @@ void setup() {
   pinMode(PIN_N_FAULT, INPUT_PULLUP);
   analogReadResolution(12);
 
+  // DRV8301 hardware reset, then leave it DISABLED (safe state).
   pinMode(PIN_EN_GATE, OUTPUT);
   digitalWrite(PIN_EN_GATE, LOW);  delay(50);
   digitalWrite(PIN_EN_GATE, HIGH); delay(50);
+  digitalWrite(PIN_EN_GATE, LOW);                              // stay disabled
 
   Serial.begin(115200);
   uint32_t t0 = millis();
@@ -268,14 +303,14 @@ void setup() {
   encoder.init();
   motor.linkSensor(&encoder);
 
-  // ---- driver ----
+  // ---- driver (configured, NOT enabled) ----
   driver.voltage_power_supply = CFG_VBUS_NOMINAL;
   driver.pwm_frequency        = CFG_PWM_FREQ_HZ;
   driver.voltage_limit        = CFG_VOLT_LIMIT;
   if (!driver.init()) { Serial.println("[-] driver.init FAILED"); while (1); }
   motor.linkDriver(&driver);
 
-  // ---- motor / control ----
+  // ---- motor / control config (no calibration here) ----
   motor.voltage_limit        = CFG_VOLT_LIMIT;
   motor.velocity_limit       = CFG_VEL_LIMIT;
   motor.controller           = MotionControlType::torque;
@@ -290,20 +325,14 @@ void setup() {
   motor.P_angle.P            = CFG_POS_P;
   motor.LPF_velocity.Tf      = CFG_LPF_VEL_TF;
   if (!motor.init()) { Serial.println("[-] motor.init FAILED"); while (1); }
+  motor.disable();                                            // remain safe
 
-  driver.enable();
-  motor.enable();
-  Serial.println("Calibrating (initFOC)... keep the motor free.");
-  if (!motor.initFOC()) { Serial.println("[-] initFOC FAILED"); while (1); }
-  Serial.print("initFOC OK | dir=");
-  Serial.print(motor.sensor_direction == Direction::CW ? "CW" : "CCW");
-  Serial.print(" zero_elec="); Serial.println(motor.zero_electric_angle, 4);
-
-  // ---- default control state: spin on boot at CFG_BOOT_TORQUE (voltage) ----
-  g_io.armed         = true;
+  // ---- default command state: SAFE (disarmed, zero setpoint) ----
+  g_io.armed         = false;
   g_io.estop         = false;
   g_io.control_mode  = CTRL_TORQUE;
-  g_io.input_torque  = CFG_BOOT_TORQUE;
+  g_io.input_torque  = 0.0f;
+  g_io.input_vel     = 0.0f;
   g_io.vel_limit     = CFG_VEL_LIMIT;
   g_io.current_limit = CFG_CURRENT_LIMIT;
   g_io.last_setpoint_ms = millis();
@@ -323,8 +352,8 @@ void setup() {
     while (1);
   }
 
-  Serial.print("Scheduler starting @ Uq="); Serial.print(CFG_BOOT_TORQUE, 2);
-  Serial.println(" V. Console: T<Nm/V>, V<rad/s>, C(clear).");
+  Serial.println("SAFE state (disarmed). Arm to calibrate + run:");
+  Serial.println("  CAN: Set_Axis_State(8)   or   serial: A");
   vTaskStartScheduler();
   for (;;) {}
 }
