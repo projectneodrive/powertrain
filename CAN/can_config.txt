@@ -1,3 +1,0 @@
-odrv0.axis0.config.can_node_id = 0
-
-sudo chmod a+rw /dev/ttyUSB0
