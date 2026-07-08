@@ -8,9 +8,12 @@ application: e‑bike motor control (torque / velocity, with sensor or sensorles
 
 ## 👉 Start here
 
-**[docs/Getting_Started.md](docs/Getting_Started.md)** — a from‑zero guide:
-install the toolchain, flash the board with an ST‑Link, and drive it over CAN
-(with a full Arduino example and the complete command reference).
+- **[docs/Getting_Started.md](docs/Getting_Started.md)** — from‑zero guide:
+  install the toolchain, flash the board with an ST‑Link, and drive it over CAN
+  (with a full Arduino example and the complete command reference).
+- **[docs/Calibration.md](docs/Calibration.md)** — commissioning a **new motor**:
+  which parameters to find, how to measure `R`/`L` + sensor offset/direction, and
+  how to save them so the board boots pre‑calibrated.
 
 ## Repository layout
 
@@ -41,7 +44,7 @@ The PlatformIO firmware project **is the repository root**.
 | Velocity control (PID) / position control (P) / torque | ✅ |
 | **Phase‑current sensing** → true Nm torque + current limiting (`foc_current`) | ✅ (falls back to voltage torque if current‑sense init fails) |
 | **Motor R/L autocalibration** (`characteriseMotor`, CAN `MOTOR_CALIBRATION` / serial `M`) | ✅ |
-| **Hall** sensor support | ❌ active — only the HW quadrature encoder is wired (Phase 5) |
+| **Hall** sensor support | ✅ compile‑time select (`SENSOR_TYPE` = quadrature ↔ hall) |
 | **Sensorless** (BEMF/flux observer) | ❌ (Phase 7; SimpleFOC has no built‑in observer) |
 | Config / calibration **persistence to flash** | ❌ (Phase 5/6b) |
 
@@ -50,3 +53,8 @@ The PlatformIO firmware project **is the repository root**.
 STM32F405RGT6 @ 168 MHz · DRV8301 6‑PWM (TIM1) · encoder/hall PB4/PB5(/PC9) ·
 DRV SPI3 CS PC13 · phase current PC0/PC1 · Vbus PA6 · CAN1 PB8/PB9. Full pin map
 in [`include/board_config.h`](include/board_config.h).
+
+Two compile‑time switches there: **`MOTOR_PRESET`** (`BENCH` 7pp+encoder /
+`EBIKE` 25pp+hall) and **`SENSOR_TYPE`** (`SENSOR_TYPE_QUADRATURE` /
+`SENSOR_TYPE_HALL`). `SENSOR_TYPE` defaults from the preset but can be overridden
+in `platformio.ini` (`-D SENSOR_TYPE=SENSOR_TYPE_HALL`).

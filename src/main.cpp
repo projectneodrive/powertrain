@@ -59,7 +59,16 @@ BLDCDriver6PWM driver = BLDCDriver6PWM(PIN_M0_INH_A, PIN_M0_INL_A,
                                        PIN_M0_INH_B, PIN_M0_INL_B,
                                        PIN_M0_INH_C, PIN_M0_INL_C, PIN_EN_GATE);
 BLDCMotor      motor  = BLDCMotor(CFG_POLE_PAIRS);
-STM32HWEncoder encoder = STM32HWEncoder(CFG_ENC_PPR, PIN_ENC_A, PIN_ENC_B);
+
+// Feedback sensor — selected at compile time in board_config.h.
+#if SENSOR_TYPE == SENSOR_TYPE_HALL
+HallSensor     sensor = HallSensor(PIN_ENC_A, PIN_ENC_B, PIN_ENC_Z, CFG_POLE_PAIRS);
+static void doHallA() { sensor.handleA(); }
+static void doHallB() { sensor.handleB(); }
+static void doHallC() { sensor.handleC(); }
+#else
+STM32HWEncoder sensor = STM32HWEncoder(CFG_ENC_PPR, PIN_ENC_A, PIN_ENC_B);
+#endif
 
 // DRV8301 config SPI (SPI3) + low-side current sense (phases B/C on PC0/PC1).
 SPIClass       spi3(PIN_DRV_MOSI, PIN_DRV_MISO, PIN_DRV_SCK);
@@ -154,8 +163,22 @@ static void applyControl() {
   if (want && !g_focReady) {
     enableStage();
     if (!g_calibrated) {
-      if (motor.initFOC()) {
+      // Pre-calibrated: pre-load the saved sensor offset/direction so initFOC
+      // skips the (large) alignment SEARCH — SimpleFOC honours these if set.
+      // Otherwise auto-align (the motor sweeps to find them).
+      if (CFG_PRECALIBRATED) {
+        motor.sensor_direction    = (CFG_SENSOR_DIRECTION >= 0) ? Direction::CW
+                                                                : Direction::CCW;
+        motor.zero_electric_angle = CFG_ZERO_ELEC_ANGLE;
+      }
+      int ok = motor.initFOC();
+      if (ok) {
         g_calibrated = true;
+        // Print the calibration result so it can be copied into board_config.h.
+        Serial.print("initFOC OK | CFG_SENSOR_DIRECTION=");
+        Serial.print(motor.sensor_direction == Direction::CW ? 1 : -1);
+        Serial.print("  CFG_ZERO_ELEC_ANGLE=");
+        Serial.println(motor.zero_electric_angle, 4);
       } else {
         g_io.axis_error |= ERR_ENCODER_FAILED;   // alignment failed
         g_io.armed = false;
@@ -345,9 +368,12 @@ void setup() {
   Serial.print("DRV8301 status1=0x"); Serial.print(drv.status1(), HEX);
   Serial.print(" gain_set="); Serial.println(gain_ok ? "OK" : "FAIL(check SPI)");
 
-  // ---- sensor: hardware timer encoder (no EXTI interrupts) ----
-  encoder.init();
-  motor.linkSensor(&encoder);
+  // ---- sensor: quadrature (HW timer, no EXTI) or hall (interrupts) ----
+  sensor.init();
+#if SENSOR_TYPE == SENSOR_TYPE_HALL
+  sensor.enableInterrupts(doHallA, doHallB, doHallC);   // low-rate: scheduler-safe
+#endif
+  motor.linkSensor(&sensor);
 
   // ---- driver (configured, NOT enabled) ----
   driver.voltage_power_supply = CFG_VBUS_NOMINAL;
@@ -386,6 +412,9 @@ void setup() {
   motor.PID_velocity.output_ramp = CFG_VEL_RAMP;
   motor.P_angle.P            = CFG_POS_P;
   motor.LPF_velocity.Tf      = CFG_LPF_VEL_TF;
+  // Saved phase R/L from characteriseMotor (0 = leave unset -> SimpleFOC defaults).
+  if (CFG_PHASE_R > 0.0f) motor.phase_resistance = CFG_PHASE_R;
+  if (CFG_PHASE_L > 0.0f) motor.phase_inductance = CFG_PHASE_L;
   if (!motor.init()) { Serial.println("[-] motor.init FAILED"); while (1); }
   motor.disable();                                            // EN_GATE low -> safe
 

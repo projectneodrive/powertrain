@@ -121,6 +121,19 @@
 #define CFG_LPF_CUR_TF     0.005f   // current measurement low-pass (s)
 #define CFG_CHAR_VOLTAGE   1.0f     // voltage used by characteriseMotor() for R/L
 
+// ---------------------------------------------------------------------------
+//  Pre-calibration ("saved" motor params). Run the commissioning procedure once
+//  (see docs/Calibration.md), copy the printed numbers here, then set
+//  CFG_PRECALIBRATED 1 so the board arms WITHOUT any calibration motion — the
+//  compile-time equivalent of ODrive's pre_calibrated. (Flash-runtime saving is
+//  a later phase.) Leave 0 to auto-align on each first arm.
+// ---------------------------------------------------------------------------
+#define CFG_PRECALIBRATED    0         // 1 = use the values below, skip alignment
+#define CFG_ZERO_ELEC_ANGLE  0.0000f   // motor.zero_electric_angle (rad), from initFOC
+#define CFG_SENSOR_DIRECTION 1         // +1 = CW, -1 = CCW, from initFOC
+#define CFG_PHASE_R          0.0f      // phase resistance (ohm); 0 = leave unset
+#define CFG_PHASE_L          0.0f      // phase inductance (H);   0 = leave unset
+
 // ============================================================================
 //  FreeRTOS timing / priorities  (higher number = higher urgency)
 // ============================================================================

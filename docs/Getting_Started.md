@@ -155,6 +155,11 @@ A successful upload ends with something like `Programming Complete!` /
    - `M` → measure phase resistance/inductance (motor must be free)
    - `I` → disarm (back to safe) &nbsp; `C` → clear a latched fault
 
+> **New motor?** Do the one‑time commissioning in **[Calibration.md](Calibration.md)**
+> — measure `R`/`L` and the sensor offset/direction, save them into
+> `board_config.h`, and the board boots pre‑calibrated (arms without the
+> alignment sweep, so the rotor needn't be free).
+
 > The steady `#N` counter proves the real‑time scheduler is healthy — it keeps a
 > fixed 10 Hz cadence even while the motor spins fast (this is the bug we fixed
 > by moving the encoder onto a hardware timer).
@@ -316,6 +321,8 @@ so odrivetool and existing ODrive CAN tools work unchanged.
 ---
 
 ### See also
+- **[Calibration.md](Calibration.md)** — commissioning a new motor (find & save
+  `R`/`L`, sensor offset/direction, pre‑calibrated boot).
 - Firmware source: [`src/main.cpp`](../src/main.cpp),
   [`include/board_config.h`](../include/board_config.h),
   [`lib/odrive_can/`](../lib/odrive_can/).
