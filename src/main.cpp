@@ -245,7 +245,7 @@ static void publishTelemetry() {
 // ============================================================================
 static void FOCTask(void *) {
   g_focTask = xTaskGetCurrentTaskHandle();
-  g_focTimer = new HardwareTimer(TIM6);          // free basic timer (TIM1=PWM, TIM3=enc)
+  g_focTimer = new HardwareTimer(TIM6);   // free basic timer (TIM1=PWM, TIM3=enc)
   g_focTimer->setOverflow(FOC_TICK_HZ, HERTZ_FORMAT);
   g_focTimer->attachInterrupt(onFocTick);
   g_focTimer->setInterruptPriority(NVIC_PRIO_RTOS_SAFE, 0);
