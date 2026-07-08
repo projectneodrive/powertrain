@@ -253,6 +253,33 @@ target every 3 seconds and prints the heartbeat / encoder telemetry it receives.
 It demonstrates **every** command category: state, mode, velocity, torque,
 position, limits, estop, clear‑errors, and reading telemetry.
 
+---
+
+## 8b. ESP32 example: native TWAI + external transceiver
+
+If you want to use an **ESP32** instead of an Arduino Uno/Nano, the repo now
+includes [`CAN/esp32_twai_sender/esp32_twai_sender.ino`](../CAN/esp32_twai_sender/esp32_twai_sender.ino).
+This version uses the ESP32's built-in **TWAI** controller and an external CAN
+transceiver such as the **CJMCU-230**.
+
+**Important wiring note:** TWAI is only the CAN controller inside the ESP32.
+You still need a transceiver to convert the ESP32's TX/RX logic signals into
+the differential **CANH/CANL** bus.
+
+**Typical ESP32 TWAI wiring:**
+
+- ESP32 TWAI TX GPIO -> transceiver TXD
+- ESP32 TWAI RX GPIO -> transceiver RXD
+- Transceiver CANH/CANL -> board CANH/CANL
+- Shared GND between ESP32, transceiver, and motor controller
+
+The sketch defaults to GPIO 5 for TX and GPIO 4 for RX, but those can be
+changed directly in the `.ino` file if your board uses different free pins.
+
+The command flow is the same as the Arduino sketch: clear errors, set limits,
+arm the axis, select velocity mode, then stream `Set_Input_Vel()` commands.
+Telemetry handling is also unchanged because it is still ODrive CANSimple.
+
 **No Arduino? Use SocketCAN** (Linux, with a USB‑CAN adapter):
 ```bash
 candump can0                    # watch: 0x001 heartbeat, 0x009 estimates
@@ -315,6 +342,7 @@ so odrivetool and existing ODrive CAN tools work unchanged.
 | Motor doesn't move | Is it armed? (`Set_Axis_State(8)` or serial). Is `Vbus` present? Check `nFAULT` — a `[FAULT]` on serial means the DRV8301 tripped (over‑current); reduce load and send `C`. |
 | `candump` shows nothing | Bit rate mismatch (must be 100 kbit/s), missing 120 Ω terminators, swapped CANH/CANL, or the clone's CAN transceiver isn't populated (PB8/PB9). |
 | MCP2515 won't init | Wrong crystal setting — try `MCP_16MHZ` vs `MCP_8MHZ` in the sketch. |
+| ESP32 TWAI won't send or receive | Check that the transceiver is 3.3 V compatible, TXD/RXD are wired to the correct GPIOs, and CANH/CANL are not swapped. |
 | `Vbus` reads wrong | Calibrate `CFG_VBUS_DIV` in `board_config.h` to your board's divider. |
 | Motor spins the wrong way / jitters | Encoder A/B direction; the `STM32HWEncoder` is new — verify sign vs. the old software encoder. |
 

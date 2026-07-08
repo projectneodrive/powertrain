@@ -23,7 +23,7 @@ The PlatformIO firmware project **is the repository root**.
 |------|-----------|
 | [`platformio.ini`](platformio.ini), [`src/`](src/), [`include/`](include/), [`lib/`](lib/) | **The firmware.** `src/main.cpp` (FreeRTOS tasks + axis state machine), `include/board_config.h` (pins / limits / timing), `lib/odrive_can/` (CANSimple protocol layer). |
 | [`test/`](test/) | Standalone bench sketches (raw encoder read, open‑loop, closed‑loop) — **not** part of the main build. |
-| [`CAN/`](CAN/) | CAN tooling: the ODrive CANSimple **DBC generator** (`create_can_dbc.py`) and an **Arduino CAN sender** example (`arduino_can_sender/`). |
+| [`CAN/`](CAN/) | CAN tooling: the ODrive CANSimple **DBC generator** (`create_can_dbc.py`) plus **Arduino MCP2515** and **ESP32 TWAI** sender examples (`arduino_can_sender/`, `esp32_twai_sender/`). |
 | [`docs/`](docs/) | Documentation (start with `Getting_Started.md`). |
 
 ## Firmware status
@@ -53,6 +53,10 @@ The PlatformIO firmware project **is the repository root**.
 STM32F405RGT6 @ 168 MHz · DRV8301 6‑PWM (TIM1) · encoder/hall PB4/PB5(/PC9) ·
 DRV SPI3 CS PC13 · phase current PC0/PC1 · Vbus PA6 · CAN1 PB8/PB9. Full pin map
 in [`include/board_config.h`](include/board_config.h).
+
+For host-side CAN control, the repo includes both an Arduino MCP2515 sender and
+an ESP32 native TWAI sender. The ESP32 sketch expects an external 3.3 V CAN
+transceiver such as the CJMCU-230.
 
 Two compile‑time switches there: **`MOTOR_PRESET`** (`BENCH` 7pp+encoder /
 `EBIKE` 25pp+hall) and **`SENSOR_TYPE`** (`SENSOR_TYPE_QUADRATURE` /
