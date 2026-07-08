@@ -150,8 +150,9 @@ A successful upload ends with something like `Programming Complete!` /
    twitches, so keep it free), then enters closed loop:
    - `A` → arm (equivalent to CAN `Set_Axis_State(8)`)
    - `V10` → velocity mode, 10 rad/s
-   - `T0.8` → torque mode, 0.8 (volts for now — becomes Nm once current sensing
-     is added)
+   - `T0.5` → torque mode, 0.5 Nm (real current if current‑sense is active;
+     q‑axis volts in the voltage fallback)
+   - `M` → measure phase resistance/inductance (motor must be free)
    - `I` → disarm (back to safe) &nbsp; `C` → clear a latched fault
 
 > The steady `#N` counter proves the real‑time scheduler is healthy — it keeps a
@@ -268,7 +269,7 @@ Node 0 shown (`ID = command_id`). For another node, add `node_id << 5`.
 | ID | Command | Payload (little‑endian) | Meaning |
 |----|---------|-------------------------|---------|
 | `0x002` | Estop | — | Emergency stop, latched |
-| `0x007` | Set_Axis_State | `int32 state` | `1`=idle (disarm), `8`=closed‑loop (arm), `5`=sensorless |
+| `0x007` | Set_Axis_State | `int32 state` | `1`=idle (disarm), `8`=closed‑loop (arm), `4`=motor cal (measure R/L), `5`=sensorless |
 | `0x00B` | Set_Controller_Mode | `int32 mode, int32 input_mode` | mode `1`=torque `2`=velocity `3`=position; input `1`=passthrough |
 | `0x00C` | Set_Input_Pos | `float pos(rev)` [`,int16 vel_ff, int16 torq_ff`] | position target |
 | `0x00D` | Set_Input_Vel | `float vel(rev/s), float torque_ff(Nm)` | velocity target |
@@ -290,9 +291,10 @@ Node 0 shown (`ID = command_id`). For another node, add `node_id << 5`.
 | `0x017` | Get_Bus_Voltage_Current | `float voltage(V), float current(A)` | on request / cyclic |
 | `0x003/4/5/1D` | Get_*_Error | `uint32 error` | on request |
 
-> **Torque note:** until phase‑current sensing is added, `Set_Input_Torque`
-> (Nm) is applied as a q‑axis **voltage** and `Get_Iq` reports 0. **Velocity**
-> and **position** control are fully functional today.
+> **Torque note:** `Set_Input_Torque` (Nm) is converted to a q‑axis current
+> (`Iq = Nm / Kt`) and regulated by the FOC current loop, with `Get_Iq`
+> reporting the real measured current. If the current‑sense hardware fails to
+> initialise, the firmware falls back to applying the value as a q‑axis voltage.
 
 This table matches the DBC in [`CAN/create_can_dbc.py`](../CAN/create_can_dbc.py),
 so odrivetool and existing ODrive CAN tools work unchanged.

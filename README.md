@@ -31,15 +31,16 @@ The PlatformIO firmware project **is the repository root**.
 - ✅ Safe‑state boot: disarmed until a CAN `Set_Axis_State(CLOSED_LOOP)` (or serial `A`)
 - ✅ ODrive CANSimple interface — torque / velocity / position, switchable at
   runtime; heartbeat + telemetry
+- ✅ Phase‑current sensing (DRV8301 + low‑side shunts) → `foc_current` torque control
 
 ### What SimpleFOC does today
 
 | Feature | Status |
 |---------|--------|
 | Sensor **offset + direction autocalibration** (`initFOC`, runs on arm) | ✅ (not yet persisted → re‑runs each power‑up) |
-| Velocity control (PID) / position control (P) / torque (voltage) | ✅ |
-| **Motor R/L autocalibration** (phase resistance/inductance) | ❌ (needs current sensing — Phase 4) |
-| **Phase‑current sensing** → true Nm torque + current limiting | ❌ (Phase 4) |
+| Velocity control (PID) / position control (P) / torque | ✅ |
+| **Phase‑current sensing** → true Nm torque + current limiting (`foc_current`) | ✅ (falls back to voltage torque if current‑sense init fails) |
+| **Motor R/L autocalibration** (`characteriseMotor`, CAN `MOTOR_CALIBRATION` / serial `M`) | ✅ |
 | **Hall** sensor support | ❌ active — only the HW quadrature encoder is wired (Phase 5) |
 | **Sensorless** (BEMF/flux observer) | ❌ (Phase 7; SimpleFOC has no built‑in observer) |
 | Config / calibration **persistence to flash** | ❌ (Phase 5/6b) |

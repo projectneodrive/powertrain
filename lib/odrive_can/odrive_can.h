@@ -79,7 +79,7 @@ struct AxisIO {
   volatile uint8_t  input_mode       = 1;       // PASSTHROUGH
   volatile float    input_pos        = 0.0f;    // rad
   volatile float    input_vel        = 0.0f;    // rad/s
-  volatile float    input_torque     = 0.0f;    // Nm (used as Uq volts until Phase 4)
+  volatile float    input_torque     = 0.0f;    // Nm
   volatile float    vel_limit        = 0.0f;    // rad/s
   volatile float    current_limit    = 0.0f;    // A
   volatile float    pos_gain         = 0.0f;    // (rad/s)/rad
@@ -88,6 +88,7 @@ struct AxisIO {
   volatile uint32_t last_setpoint_ms = 0;       // watchdog feed
   volatile bool     req_reboot       = false;
   volatile bool     req_clear_errors = false;
+  volatile bool     req_characterise = false;   // measure motor R/L (MOTOR_CALIBRATION)
   volatile bool     new_mode         = false;   // control_mode changed by CAN
 
   // telemetry (control loop writes, CAN reads)

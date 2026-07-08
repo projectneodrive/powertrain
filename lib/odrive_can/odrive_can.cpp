@@ -54,6 +54,8 @@ void OdriveCAN::dispatch(uint8_t cmd, const CAN_message_t& m) {
         if (!_io.estop) { _io.armed = true; _io.last_setpoint_ms = millis(); }
       } else if (s == AXIS_IDLE) {
         _io.armed = false;
+      } else if (s == AXIS_MOTOR_CAL) {
+        _io.req_characterise = true;             // measure phase R/L (while disarmed)
       }
       break;
     }

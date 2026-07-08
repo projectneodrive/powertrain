@@ -79,6 +79,24 @@
 #define CFG_KT           (8.27f / CFG_KV)
 
 // ---------------------------------------------------------------------------
+//  Sensor selection (compile-time). Quadrature uses the STM32 hardware timer
+//  (TIM3, no interrupts); Hall uses SimpleFOC's interrupt-driven HallSensor on
+//  the SAME pins (PB4/PB5/PC9). Hall edge rate is ~2 orders lower than a fast
+//  quadrature encoder, so its interrupts don't threaten the scheduler.
+//  Override in platformio.ini with e.g. -D SENSOR_TYPE=SENSOR_TYPE_HALL.
+// ---------------------------------------------------------------------------
+#define SENSOR_TYPE_QUADRATURE  1
+#define SENSOR_TYPE_HALL        2
+
+#ifndef SENSOR_TYPE
+  #if MOTOR_PRESET == MOTOR_PRESET_EBIKE
+    #define SENSOR_TYPE SENSOR_TYPE_HALL        // hub motor -> hall sensors
+  #else
+    #define SENSOR_TYPE SENSOR_TYPE_QUADRATURE  // bench motor -> quadrature enc
+  #endif
+#endif
+
+// ---------------------------------------------------------------------------
 //  Power / limits — conservative values for bring-up. Tighten per motor.
 // ---------------------------------------------------------------------------
 #define CFG_VBUS_NOMINAL   24.0f    // driver.voltage_power_supply
@@ -95,6 +113,13 @@
 // ---------------------------------------------------------------------------
 #define CFG_SHUNT_OHMS     0.0005f  // 0.5 mOhm (ODrive 56V); clones vary (verify!)
 #define CFG_DRV_GAIN       40.0f    // V/V  (DRV8301: 10/20/40/80 selectable)
+
+// FOC current-loop PID + measurement filter (foc_current torque mode).
+// Starting points — expect to bench-tune per motor.
+#define CFG_CUR_P          1.0f     // current PID P (V/A)
+#define CFG_CUR_I          100.0f   // current PID I
+#define CFG_LPF_CUR_TF     0.005f   // current measurement low-pass (s)
+#define CFG_CHAR_VOLTAGE   1.0f     // voltage used by characteriseMotor() for R/L
 
 // ============================================================================
 //  FreeRTOS timing / priorities  (higher number = higher urgency)
