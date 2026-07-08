@@ -1,27 +1,28 @@
 // ============================================================================
-//  SimpleFOC + FreeRTOS firmware  —  ODrive v3.6 (MKS clone) / STM32F405
+//  SimpleFOC + FreeRTOS + ODrive CANSimple  —  ODrive v3.6 (MKS clone) / F405
 //
-//  Phase 1-3 milestone:
-//   * Phase 1: all pins/limits centralized in include/board_config.h
-//   * Phase 2: quadrature sensing via STM32HWEncoder (TIM3 hardware counter)
-//              -> replaces SimpleFOC's software Encoder + enableInterrupts().
-//              This DELETES the ~100 kHz A/B EXTI ISRs that were starving the
-//              FreeRTOS scheduler. The hardware timer counts edges for free.
-//   * Phase 3: FreeRTOS task layout:
-//              - FOCTask  (prio 4): woken by a 20 kHz TIM6 tick, runs loopFOC()
-//                every tick and move() every 20th (1 kHz) via motion_downsample.
-//              - SafetyTask (prio 5): polls DRV8301 nFAULT, hardware-cuts EN_GATE.
-//              - TelemetryTask (prio 2): steady-cadence debug + serial commands.
+//  Tasks:
+//   * FOCTask     (prio 4): woken by a 20 kHz TIM6 tick; loopFOC() every tick,
+//                  move() every 20th (1 kHz). STM32HWEncoder (TIM3) = no EXTI,
+//                  which is what fixed the scheduler starvation.
+//   * SafetyTask  (prio 5): polls DRV8301 nFAULT, hardware-cuts EN_GATE.
+//   * CommsTask   (prio 3): drains CAN @1 kHz, applies setpoints/mode/arming +
+//                  watchdog, publishes telemetry, sends cyclic CAN frames.
+//   * SerialTask  (prio 2): USB-CDC debug + a tiny command console.
 //
-//  Torque is still voltage-mode here (no current sensing yet — that is Phase 4).
-//  Serial commands (115200 USB-CDC):  T<volts>  set target voltage
-//                                      C         clear latched fault
+//  Control modes are switchable at runtime over CAN (Set_Controller_Mode):
+//   torque (voltage until Phase 4 current sensing) / velocity / position.
+//
+//  Serial console (115200):  T<Nm|V>  torque   V<rad/s>  velocity   C  clear
 // ============================================================================
 #include <Arduino.h>
 #include <SimpleFOC.h>
 #include <STM32FreeRTOS.h>
 #include "encoders/stm32hwencoder/STM32HWEncoder.h"   // SimpleFOCDrivers
+#include "odrive_can.h"
 #include "board_config.h"
+
+using namespace odcan;
 
 // ============================================================================
 //  ODRIVE CLOCK CONFIG (8 MHz HSE -> 168 MHz)
@@ -50,28 +51,28 @@ extern "C" void SystemClock_Config(void) {
 }
 
 // ============================================================================
-//  SimpleFOC objects
+//  Objects
 // ============================================================================
 BLDCDriver6PWM driver = BLDCDriver6PWM(PIN_M0_INH_A, PIN_M0_INL_A,
                                        PIN_M0_INH_B, PIN_M0_INL_B,
                                        PIN_M0_INH_C, PIN_M0_INL_C, PIN_EN_GATE);
 BLDCMotor      motor  = BLDCMotor(CFG_POLE_PAIRS);
-
-// Hardware quadrature encoder on TIM3 (PB4/PB5). No software interrupts.
 STM32HWEncoder encoder = STM32HWEncoder(CFG_ENC_PPR, PIN_ENC_A, PIN_ENC_B);
 
-// ============================================================================
-//  Shared state (single 32-bit values -> atomic on Cortex-M4)
-// ============================================================================
-// Hard-coded open test torque (voltage mode), matching the pre-RTOS main.cpp:
-// the motor starts turning right after calibration. Override live with 'T<volts>'.
-volatile float        g_target_voltage = 0.8f;   // commanded Uq (voltage mode)
-volatile bool         g_fault          = false;   // latched fault
-static   TaskHandle_t g_focTask        = nullptr; // notified by the TIM6 ISR
-static   HardwareTimer *g_focTimer     = nullptr;
+AxisIO         g_io;            // shared command/telemetry block
+OdriveCAN      g_can(g_io);     // CANSimple interface (CAN1 PB8/PB9)
 
 // ============================================================================
-//  20 kHz FOC tick ISR -> wake FOCTask
+//  Shared state
+// ============================================================================
+volatile float        g_active_target = 0.0f;   // consumed by move() in FOCTask
+volatile bool         g_fault         = false;   // DRV8301 hardware fault latch
+static   bool         g_motorArmed    = false;   // reflects motor.enable() state
+static   TaskHandle_t g_focTask       = nullptr;
+static   HardwareTimer *g_focTimer    = nullptr;
+
+// ============================================================================
+//  20 kHz FOC tick ISR -> wake FOCTask  (syscall-safe NVIC priority)
 // ============================================================================
 static void onFocTick() {
   BaseType_t hpw = pdFALSE;
@@ -80,50 +81,125 @@ static void onFocTick() {
 }
 
 // ============================================================================
-//  FOCTask — the real-time control loop
+//  Helpers
+// ============================================================================
+static float readVbus() {
+  // 12-bit ADC, 3.3 V ref, external divider CFG_VBUS_DIV. VERIFY divider!
+  return (float)analogRead(PIN_VBUS) * (3.3f / 4095.0f) * CFG_VBUS_DIV;
+}
+
+// Bridge the CAN command block onto SimpleFOC. Runs at 1 kHz in CommsTask.
+static void applyControl() {
+  uint32_t now = millis();
+
+  if (g_io.req_reboot) {
+    motor.disable(); digitalWrite(PIN_EN_GATE, LOW);
+    NVIC_SystemReset();
+  }
+  if (g_io.req_clear_errors) {
+    g_io.req_clear_errors = false;
+    if (digitalRead(PIN_N_FAULT) == HIGH) g_fault = false;
+    g_io.axis_error = 0;
+  }
+
+  // --- arming: require CAN-armed, no estop, no hardware fault ---
+  bool want = g_io.armed && !g_io.estop && !g_fault &&
+              (digitalRead(PIN_N_FAULT) == HIGH);
+  if (want && !g_motorArmed) { motor.enable();  g_motorArmed = true; }
+  if (!want && g_motorArmed) { motor.disable(); g_motorArmed = false; }
+
+  // --- control mode + target (runtime switchable via Set_Controller_Mode) ---
+  switch (g_io.control_mode) {
+    case CTRL_VELOCITY:
+      motor.controller = MotionControlType::velocity;
+      g_active_target  = g_io.input_vel;                    // rad/s
+      break;
+    case CTRL_POSITION:
+      motor.controller = MotionControlType::angle;
+      g_active_target  = g_io.input_pos;                    // rad
+      break;
+    case CTRL_TORQUE:
+    case CTRL_VOLTAGE:
+    default:
+      motor.controller        = MotionControlType::torque;
+      motor.torque_controller = TorqueControlType::voltage; // Phase 4 -> foc_current
+      g_active_target         = g_io.input_torque;          // Nm read as Uq(V) for now
+      break;
+  }
+
+  if (g_io.vel_limit > 0.0f) motor.velocity_limit = g_io.vel_limit;
+  if (g_io.pos_gain  > 0.0f) motor.P_angle.P      = g_io.pos_gain;
+
+  // --- CAN watchdog (disabled when CFG_WATCHDOG_MS == 0) ---
+  if (CFG_WATCHDOG_MS > 0 && g_motorArmed &&
+      (now - g_io.last_setpoint_ms) > CFG_WATCHDOG_MS) {
+    g_io.axis_error |= ERR_WATCHDOG_EXPIRED;
+    g_io.armed = false;
+  }
+
+  if (!g_motorArmed) g_active_target = 0.0f;
+}
+
+static void publishTelemetry() {
+  g_io.pos_rev     = motor.shaft_angle / TWO_PI;
+  g_io.vel_rev     = motor.shaft_velocity / TWO_PI;
+  g_io.iq_setpoint = 0.0f;   // real values arrive with Phase 4 current sensing
+  g_io.iq_measured = 0.0f;
+  g_io.vbus        = readVbus();
+  g_io.ibus        = 0.0f;
+  g_io.cur_state   = g_motorArmed ? AXIS_CLOSED_LOOP : AXIS_IDLE;
+}
+
+// ============================================================================
+//  FOCTask
 // ============================================================================
 static void FOCTask(void *) {
   g_focTask = xTaskGetCurrentTaskHandle();
-
-  // Configure the FOC time base. TIM6 is a free basic timer (TIM1 = PWM,
-  // TIM3 = encoder). Its ISR only notifies FreeRTOS, so it MUST sit at a
-  // syscall-safe NVIC priority.
-  g_focTimer = new HardwareTimer(TIM6);
+  g_focTimer = new HardwareTimer(TIM6);          // free basic timer (TIM1=PWM, TIM3=enc)
   g_focTimer->setOverflow(FOC_TICK_HZ, HERTZ_FORMAT);
   g_focTimer->attachInterrupt(onFocTick);
   g_focTimer->setInterruptPriority(NVIC_PRIO_RTOS_SAFE, 0);
   g_focTimer->resume();
 
   for (;;) {
-    // Block until the next 20 kHz tick — this is what frees the CPU for the
-    // lower-priority tasks (the old taskYIELD() busy-loop never blocked).
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);     // block until next 20 kHz tick
     if (g_fault) continue;
-
-    motor.loopFOC();               // reads HW encoder + commutates (20 kHz)
-    motor.move(g_target_voltage);  // motion_downsample -> effective 1 kHz
+    motor.loopFOC();
+    motor.move(g_active_target);
   }
 }
 
 // ============================================================================
-//  SafetyTask — hardware fault backstop (highest priority)
+//  SafetyTask
 // ============================================================================
 static void SafetyTask(void *) {
   TickType_t last = xTaskGetTickCount();
   for (;;) {
     if (digitalRead(PIN_N_FAULT) == LOW) {
-      // Definitive, race-free hardware cut, independent of the FOC loop.
-      digitalWrite(PIN_EN_GATE, LOW);
+      digitalWrite(PIN_EN_GATE, LOW);            // definitive hardware cut
       g_fault = true;
+      g_io.axis_error |= ERR_MOTOR_FAILED;
     }
     vTaskDelayUntil(&last, pdMS_TO_TICKS(1));
   }
 }
 
 // ============================================================================
-//  TelemetryTask — steady-cadence debug (proves the scheduler is not starved)
-//  and a tiny serial command parser.
+//  CommsTask — CAN drain + control bridge + telemetry (1 kHz)
+// ============================================================================
+static void CommsTask(void *) {
+  TickType_t last = xTaskGetTickCount();
+  for (;;) {
+    g_can.poll();
+    applyControl();
+    publishTelemetry();
+    g_can.txCyclic(millis());
+    vTaskDelayUntil(&last, pdMS_TO_TICKS(1));
+  }
+}
+
+// ============================================================================
+//  SerialTask — debug + command console
 // ============================================================================
 static void handleSerial() {
   static char buf[24];
@@ -133,14 +209,16 @@ static void handleSerial() {
     if (c == '\n' || c == '\r') {
       buf[idx] = '\0';
       if (idx > 0) {
-        if (buf[0] == 'T' || buf[0] == 't') {
-          g_target_voltage = atof(buf + 1);
-        } else if (buf[0] == 'C' || buf[0] == 'c') {
-          if (digitalRead(PIN_N_FAULT) == HIGH) {  // only if fault cleared
-            g_target_voltage = 0.0f;
-            digitalWrite(PIN_EN_GATE, HIGH);
-            g_fault = false;
-          }
+        float v = atof(buf + 1);
+        switch (buf[0]) {
+          case 'T': case 't':
+            g_io.control_mode = CTRL_TORQUE; g_io.input_torque = v;
+            g_io.last_setpoint_ms = millis(); break;
+          case 'V': case 'v':
+            g_io.control_mode = CTRL_VELOCITY; g_io.input_vel = v;
+            g_io.last_setpoint_ms = millis(); break;
+          case 'C': case 'c':
+            g_io.req_clear_errors = true; g_io.estop = false; break;
         }
       }
       idx = 0;
@@ -150,31 +228,32 @@ static void handleSerial() {
   }
 }
 
-static void TelemetryTask(void *) {
+static void SerialTask(void *) {
   uint32_t beat = 0;
   TickType_t last = xTaskGetTickCount();
   for (;;) {
     handleSerial();
     Serial.print("t=");    Serial.print(millis());
     Serial.print(" #");    Serial.print(beat++);
-    Serial.print(" ang="); Serial.print(motor.shaft_angle, 3);
-    Serial.print(" vel="); Serial.print(motor.shaft_velocity, 2);
-    Serial.print(" Uq=");  Serial.print(g_target_voltage, 2);
-    Serial.println(g_fault ? " [FAULT]" : " [OK]");
-    vTaskDelayUntil(&last, pdMS_TO_TICKS(100));   // fixed 10 Hz cadence
+    Serial.print(" mode="); Serial.print(g_io.control_mode);
+    Serial.print(" tgt=");  Serial.print(g_active_target, 2);
+    Serial.print(" vel=");  Serial.print(motor.shaft_velocity, 2);
+    Serial.print(" Vbus="); Serial.print(g_io.vbus, 1);
+    Serial.print(g_motorArmed ? " ARM" : " off");
+    Serial.println(g_fault ? " [FAULT]" : "");
+    vTaskDelayUntil(&last, pdMS_TO_TICKS(100));
   }
 }
 
 // ============================================================================
 //  setup — bring-up + calibration BEFORE the scheduler starts
-//  (delay()/millis() run off the HAL SysTick until vTaskStartScheduler()).
 // ============================================================================
 void setup() {
   pinMode(PIN_M0_CS, OUTPUT); digitalWrite(PIN_M0_CS, HIGH);   // DRV SPI silent
   pinMode(PIN_M1_CS, OUTPUT); digitalWrite(PIN_M1_CS, HIGH);
   pinMode(PIN_N_FAULT, INPUT_PULLUP);
+  analogReadResolution(12);
 
-  // DRV8301 hardware reset (LOW -> HIGH)
   pinMode(PIN_EN_GATE, OUTPUT);
   digitalWrite(PIN_EN_GATE, LOW);  delay(50);
   digitalWrite(PIN_EN_GATE, HIGH); delay(50);
@@ -183,7 +262,7 @@ void setup() {
   uint32_t t0 = millis();
   while (!Serial && (millis() - t0) < 2000) { delay(10); }
   SimpleFOCDebug::enable(&Serial);
-  Serial.println("\n--- SimpleFOC + FreeRTOS (STM32HWEncoder) ---");
+  Serial.println("\n--- SimpleFOC + FreeRTOS + CANSimple ---");
 
   // ---- sensor: hardware timer encoder (no EXTI interrupts) ----
   encoder.init();
@@ -204,33 +283,50 @@ void setup() {
   motor.foc_modulation       = FOCModulationType::SpaceVectorPWM;
   motor.voltage_sensor_align = CFG_VOLT_ALIGN;
   motor.motion_downsample    = MOTION_DOWNSAMPLE;
+  motor.PID_velocity.P       = CFG_VEL_P;
+  motor.PID_velocity.I       = CFG_VEL_I;
+  motor.PID_velocity.D       = CFG_VEL_D;
+  motor.PID_velocity.output_ramp = CFG_VEL_RAMP;
+  motor.P_angle.P            = CFG_POS_P;
+  motor.LPF_velocity.Tf      = CFG_LPF_VEL_TF;
   if (!motor.init()) { Serial.println("[-] motor.init FAILED"); while (1); }
 
   driver.enable();
   motor.enable();
-
   Serial.println("Calibrating (initFOC)... keep the motor free.");
   if (!motor.initFOC()) { Serial.println("[-] initFOC FAILED"); while (1); }
   Serial.print("initFOC OK | dir=");
   Serial.print(motor.sensor_direction == Direction::CW ? "CW" : "CCW");
-  Serial.print(" zero_elec=");
-  Serial.println(motor.zero_electric_angle, 4);
+  Serial.print(" zero_elec="); Serial.println(motor.zero_electric_angle, 4);
+
+  // ---- default control state: spin on boot at CFG_BOOT_TORQUE (voltage) ----
+  g_io.armed         = true;
+  g_io.estop         = false;
+  g_io.control_mode  = CTRL_TORQUE;
+  g_io.input_torque  = CFG_BOOT_TORQUE;
+  g_io.vel_limit     = CFG_VEL_LIMIT;
+  g_io.current_limit = CFG_CURRENT_LIMIT;
+  g_io.last_setpoint_ms = millis();
+
+  // ---- CAN ----
+  g_can.begin(CFG_CAN_NODE_ID, CFG_CAN_BAUD, NVIC_PRIO_RTOS_SAFE);
+  Serial.print("CAN up: node "); Serial.print(CFG_CAN_NODE_ID);
+  Serial.print(" @ "); Serial.print(CFG_CAN_BAUD); Serial.println(" bps");
 
   // ---- launch FreeRTOS ----
-  BaseType_t r1 = xTaskCreate(SafetyTask,    "SAFE", STACK_SAFETY,    NULL, PRIO_SAFETY,    NULL);
-  BaseType_t r2 = xTaskCreate(FOCTask,       "FOC",  STACK_FOC,       NULL, PRIO_FOC,       NULL);
-  BaseType_t r3 = xTaskCreate(TelemetryTask, "TEL",  STACK_TELEMETRY, NULL, PRIO_TELEMETRY, NULL);
-  if (r1 != pdPASS || r2 != pdPASS || r3 != pdPASS) {
+  BaseType_t r1 = xTaskCreate(SafetyTask, "SAFE",  STACK_SAFETY,    NULL, PRIO_SAFETY,    NULL);
+  BaseType_t r2 = xTaskCreate(FOCTask,    "FOC",   STACK_FOC,       NULL, PRIO_FOC,       NULL);
+  BaseType_t r3 = xTaskCreate(CommsTask,  "COMMS", STACK_COMMS,     NULL, PRIO_COMMS,     NULL);
+  BaseType_t r4 = xTaskCreate(SerialTask, "SER",   STACK_TELEMETRY, NULL, PRIO_TELEMETRY, NULL);
+  if (r1 != pdPASS || r2 != pdPASS || r3 != pdPASS || r4 != pdPASS) {
     Serial.println("[-] xTaskCreate FAILED (bump FreeRTOS heap)");
     while (1);
   }
 
-  Serial.print("Scheduler starting @ Uq="); Serial.print(g_target_voltage, 2);
-  Serial.println(" V. Commands: T<volts>, C(clear fault).");
+  Serial.print("Scheduler starting @ Uq="); Serial.print(CFG_BOOT_TORQUE, 2);
+  Serial.println(" V. Console: T<Nm/V>, V<rad/s>, C(clear).");
   vTaskStartScheduler();
-
-  // never reached
   for (;;) {}
 }
 
-void loop() {}   // unused under FreeRTOS
+void loop() {}

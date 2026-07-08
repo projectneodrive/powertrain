@@ -105,6 +105,7 @@
 #define PRIO_SAFETY        5        // top: fault latch / watchdog
 #define PRIO_FOC           4        // FOC loop
 #define PRIO_CAN           3        // CAN RX drain (Phase 6)
+#define PRIO_COMMS         PRIO_CAN // alias: CAN + control-bridge task
 #define PRIO_TELEMETRY     2        // telemetry / debug
 
 // NVIC preemption priority for any ISR that calls a FreeRTOS *FromISR API.
@@ -119,3 +120,28 @@
 #define STACK_FOC        768
 #define STACK_SAFETY     256
 #define STACK_TELEMETRY  512
+#define STACK_COMMS      768
+
+// ============================================================================
+//  CAN (ODrive CANSimple) — Phase 6
+// ============================================================================
+#define CFG_CAN_NODE_ID   0
+#define CFG_CAN_BAUD      100000     // matches CAN/create_can_dbc.py (100 kbit/s)
+#define CFG_WATCHDOG_MS   0          // CAN setpoint timeout; 0 = disabled
+                                     // (0 lets the bench spin without a CAN master;
+                                     //  set e.g. 250 for an e-bike deployment)
+#define CFG_VBUS_DIV      11.0f      // Vbus ADC divider ratio — VERIFY ON CLONE
+
+// ============================================================================
+//  Motion controller defaults (velocity / position modes over CAN)
+// ============================================================================
+#define CFG_VEL_P        0.05f
+#define CFG_VEL_I        1.0f
+#define CFG_VEL_D        0.0f
+#define CFG_VEL_RAMP     200.0f      // PID output ramp (V/s)
+#define CFG_POS_P        20.0f       // position P gain ((rad/s)/rad)
+#define CFG_LPF_VEL_TF   0.01f       // velocity low-pass (s) — smooths sensor noise
+
+// Initial hard-coded torque target (voltage mode) so the motor spins on boot,
+// matching the pre-CAN behaviour. Overridden by any CAN/serial setpoint.
+#define CFG_BOOT_TORQUE  0.8f
