@@ -63,7 +63,9 @@ STM32HWEncoder encoder = STM32HWEncoder(CFG_ENC_PPR, PIN_ENC_A, PIN_ENC_B);
 // ============================================================================
 //  Shared state (single 32-bit values -> atomic on Cortex-M4)
 // ============================================================================
-volatile float        g_target_voltage = 0.0f;   // commanded Uq (voltage mode)
+// Hard-coded open test torque (voltage mode), matching the pre-RTOS main.cpp:
+// the motor starts turning right after calibration. Override live with 'T<volts>'.
+volatile float        g_target_voltage = 0.8f;   // commanded Uq (voltage mode)
 volatile bool         g_fault          = false;   // latched fault
 static   TaskHandle_t g_focTask        = nullptr; // notified by the TIM6 ISR
 static   HardwareTimer *g_focTimer     = nullptr;
@@ -223,7 +225,8 @@ void setup() {
     while (1);
   }
 
-  Serial.println("Scheduler starting. Commands: T<volts>, C(clear fault).");
+  Serial.print("Scheduler starting @ Uq="); Serial.print(g_target_voltage, 2);
+  Serial.println(" V. Commands: T<volts>, C(clear fault).");
   vTaskStartScheduler();
 
   // never reached
