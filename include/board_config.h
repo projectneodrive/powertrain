@@ -168,7 +168,7 @@
 #define CFG_WATCHDOG_MS   0          // CAN setpoint timeout; 0 = disabled.
                                      // Set e.g. 250 for an e-bike so that losing
                                      // the CAN master disarms the motor.
-#define CFG_VBUS_DIV      11.0f      // Vbus ADC divider ratio — VERIFY ON CLONE
+#define CFG_VBUS_DIV      19.0f      // Vbus ADC divider ratio — verify against your board
 
 // ============================================================================
 //  Motion controller defaults (velocity / position modes over CAN)
