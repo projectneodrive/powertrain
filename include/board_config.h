@@ -60,7 +60,7 @@
 #define MOTOR_PRESET_EBIKE   2   // 25pp hub motor + hall sensors
 
 #ifndef MOTOR_PRESET
-#define MOTOR_PRESET MOTOR_PRESET_BENCH
+#define MOTOR_PRESET MOTOR_PRESET_EBIKE
 #endif
 
 #if MOTOR_PRESET == MOTOR_PRESET_BENCH
@@ -101,9 +101,9 @@
 // ---------------------------------------------------------------------------
 #define CFG_VBUS_NOMINAL   24.0f    // driver.voltage_power_supply
 #define CFG_PWM_FREQ_HZ    20000    // 20 kHz (matches FOC tick; keeps sense window sane)
-#define CFG_VOLT_LIMIT     2.0f     // motor/driver voltage limit (safety)
-#define CFG_VOLT_ALIGN     0.8f     // voltage used during initFOC alignment
-#define CFG_CURRENT_LIMIT  15.0f    // A (used once current sensing is enabled)
+#define CFG_VOLT_LIMIT     15.0f     // motor/driver voltage limit (safety)
+#define CFG_VOLT_ALIGN     5.0f     // voltage used during initFOC alignment
+#define CFG_CURRENT_LIMIT  10.0f    // A (used once current sensing is enabled)
 #define CFG_VEL_LIMIT      100.0f   // rad/s
 
 // ---------------------------------------------------------------------------
@@ -116,9 +116,9 @@
 
 // FOC current-loop PID + measurement filter (foc_current torque mode).
 // Starting points — expect to bench-tune per motor.
-#define CFG_CUR_P          1.0f     // current PID P (V/A)
-#define CFG_CUR_I          100.0f   // current PID I
-#define CFG_LPF_CUR_TF     0.005f   // current measurement low-pass (s)
+#define CFG_CUR_P          0.02f     // current PID P (V/A)
+#define CFG_CUR_I          0.40f   // current PID I
+#define CFG_LPF_CUR_TF     0.01f   // current measurement low-pass (s)
 #define CFG_CHAR_VOLTAGE   1.0f     // voltage used by characteriseMotor() for R/L
 
 // ---------------------------------------------------------------------------
@@ -174,8 +174,8 @@
 //  Motion controller defaults (velocity / position modes over CAN)
 // ============================================================================
 #define CFG_VEL_P        0.05f
-#define CFG_VEL_I        1.0f
+#define CFG_VEL_I        0.80f
 #define CFG_VEL_D        0.0f
-#define CFG_VEL_RAMP     200.0f      // PID output ramp (V/s)
-#define CFG_POS_P        20.0f       // position P gain ((rad/s)/rad)
+#define CFG_VEL_RAMP     100.0f      // PID output ramp (V/s)
+#define CFG_POS_P        10.0f       // position P gain ((rad/s)/rad)
 #define CFG_LPF_VEL_TF   0.01f       // velocity low-pass (s) — smooths sensor noise
