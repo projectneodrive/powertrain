@@ -68,9 +68,9 @@
   #define CFG_ENC_PPR      600      // quadrature 600 PPR -> 2400 CPR
   #define CFG_KV           190.0f   // drone motor KV
 #elif MOTOR_PRESET == MOTOR_PRESET_EBIKE
-  #define CFG_POLE_PAIRS   25
+  #define CFG_POLE_PAIRS   26
   #define CFG_ENC_PPR      600      // (only used if a quadrature enc is fitted)
-  #define CFG_KV           9.38f    // hub motor KV
+  #define CFG_KV           8.2f    // hub motor KV
 #else
   #error "Unknown MOTOR_PRESET"
 #endif

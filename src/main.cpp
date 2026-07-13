@@ -315,6 +315,7 @@ static void SerialTask(void *) {
     Serial.print(" tgt=");       Serial.print(g_active_target, 2);
     Serial.print(" Iq=");        Serial.print(g_io.iq_measured, 2);
     Serial.print(" vel=");       Serial.print(motor.shaft_velocity, 2);
+    Serial.print(" pos=");       Serial.print(motor.shaft_angle, 2);
     Serial.print(" Vbus=");      Serial.print(g_io.vbus, 1);
     Serial.print(g_focReady ? " RUN" : (g_calibrated ? " idle" : " SAFE"));
     Serial.println(g_fault ? " [FAULT]" : "");
@@ -363,7 +364,7 @@ void setup() {
 
   // Lowside Current Sensing Configuration
   current_sense.linkDriver(&driver);
-  current_sense.skip_align = false; // On force l'alignement pour la mesure R/L
+  current_sense.skip_align = true; // On force l'alignement pour la mesure R/L
   g_iSenseOk = (current_sense.init() == 1);
   if (g_iSenseOk) {
     motor.linkCurrentSense(&current_sense);

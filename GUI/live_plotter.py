@@ -111,6 +111,7 @@ def build_series(capacity: int):
         "tgt": deque(maxlen=capacity),
         "iq": deque(maxlen=capacity),
         "vel": deque(maxlen=capacity),
+        "pos": deque(maxlen=capacity),
         "vbus": deque(maxlen=capacity),
         "mode": deque(maxlen=capacity),
     }
@@ -177,7 +178,7 @@ class PlotWindow(QtWidgets.QMainWindow):
         self.command_edit.setPlaceholderText("Type a command, for example: A, I, M, C, T1.5, V10")
         self.send_button = QtWidgets.QPushButton("Send")
         quick_row = QtWidgets.QHBoxLayout()
-        for label in ("A", "I", "M", "C"):
+        for label in ("A (init)", "I (stop)", "M (measure)", "C (reset)"):
             button = QtWidgets.QPushButton(label)
             button.clicked.connect(lambda checked=False, cmd=label: self.send_command(cmd))
             quick_row.addWidget(button)
@@ -216,17 +217,19 @@ class PlotWindow(QtWidgets.QMainWindow):
         plot_layout.addWidget(self.toolbar)
         plot_layout.addWidget(self.canvas)
 
-        self.axes = self.figure.subplots(4, 1, sharex=True)
+        self.axes = self.figure.subplots(5, 1, sharex=True)
         self.line_tgt = self.axes[0].plot([], [], label="target", color="#f97316")[0]
         self.line_iq = self.axes[1].plot([], [], label="Iq", color="#22c55e")[0]
         self.line_vel = self.axes[2].plot([], [], label="velocity", color="#3b82f6")[0]
-        self.line_vbus = self.axes[3].plot([], [], label="Vbus", color="#ef4444")[0]
+        self.line_pos = self.axes[3].plot([], [], label="position", color="#a855f7")[0]
+        self.line_vbus = self.axes[4].plot([], [], label="Vbus", color="#ef4444")[0]
 
         self.axes[0].set_ylabel("Target")
         self.axes[1].set_ylabel("Iq [A]")
         self.axes[2].set_ylabel("Vel [rad/s]")
-        self.axes[3].set_ylabel("Vbus [V]")
-        self.axes[3].set_xlabel("Time [s]")
+        self.axes[3].set_ylabel("Pos [rad]")
+        self.axes[4].set_ylabel("Vbus [V]")
+        self.axes[4].set_xlabel("Time [s]")
         for ax in self.axes:
             ax.grid(True, alpha=0.25)
             ax.legend(loc="upper right")
@@ -419,6 +422,7 @@ class PlotWindow(QtWidgets.QMainWindow):
             self.series["tgt"].append(item.fields.get("tgt", 0.0))
             self.series["iq"].append(item.fields.get("Iq", item.fields.get("iq", 0.0)))
             self.series["vel"].append(item.fields.get("vel", 0.0))
+            self.series["pos"].append(item.fields.get("pos", 0.0))
             self.series["vbus"].append(item.fields.get("Vbus", item.fields.get("vbus", 0.0)))
             self.series["mode"].append(item.fields.get("mode", float("nan")))
             updated = True
@@ -430,6 +434,7 @@ class PlotWindow(QtWidgets.QMainWindow):
         self.line_tgt.set_data(x, list(self.series["tgt"]))
         self.line_iq.set_data(x, list(self.series["iq"]))
         self.line_vel.set_data(x, list(self.series["vel"]))
+        self.line_pos.set_data(x, list(self.series["pos"]))
         self.line_vbus.set_data(x, list(self.series["vbus"]))
 
         xmin = max(0.0, x[-1] - self.window_s)
