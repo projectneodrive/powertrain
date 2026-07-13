@@ -5,7 +5,8 @@
 #include <SPI.h>
 #include <SimpleFOC.h>
 #include <STM32FreeRTOS.h>
-#include "encoders/stm32hwencoder/STM32HWEncoder.h" 
+#include "encoders/stm32hwencoder/STM32HWEncoder.h"
+#include "encoders/smoothing/SmoothingSensor.h"
 #include "drv8301.h"
 #include "odrive_can.h"
 #include "board_config.h"
@@ -51,8 +52,12 @@ HallSensor sensor = HallSensor(PIN_ENC_A, PIN_ENC_B, PIN_ENC_Z, CFG_POLE_PAIRS);
 static void doHallA() { sensor.handleA(); }
 static void doHallB() { sensor.handleB(); }
 static void doHallC() { sensor.handleC(); }
+// Interpole l'angle entre deux fronts hall (60° elec. de résolution sinon)
+SmoothingSensor smooth = SmoothingSensor(sensor, motor);
+Sensor& foc_sensor = smooth;
 #else
 STM32HWEncoder sensor = STM32HWEncoder(CFG_ENC_PPR, PIN_ENC_A, PIN_ENC_B);
+Sensor& foc_sensor = sensor;
 #endif
 
 SPIClass spi3(PIN_DRV_MOSI, PIN_DRV_MISO, PIN_DRV_SCK);
@@ -84,7 +89,17 @@ static void onFocTick() {
 //  Logic Helpers
 // ============================================================================
 static float readVbus() {
-  return (float)analogRead(PIN_VBUS) * (3.3f / 4095.0f) * CFG_VBUS_DIV;
+  // analogRead reconfigure l'ADC à chaque appel ; PA6 peut partager l'ADC des
+  // conversions injectées du current sense (foc_current). On échantillonne à
+  // 10 Hz et on sert la valeur en cache pour limiter les collisions.
+  static float    v_cache = 0.0f;
+  static uint32_t t_last  = 0;
+  uint32_t now = millis();
+  if (v_cache == 0.0f || (now - t_last) >= 100) {
+    t_last  = now;
+    v_cache = (float)analogRead(PIN_VBUS) * (3.3f / 4095.0f) * CFG_VBUS_DIV;
+  }
+  return v_cache;
 }
 
 static void enableStage() {
@@ -165,10 +180,15 @@ static void applyControl() {
   // --- Runtime Control Modes & Limits ---
   if (g_focReady) {
     switch (g_io.control_mode) {
-      case CTRL_VELOCITY:
+      case CTRL_VELOCITY: {
         motor.controller = MotionControlType::velocity;
-        g_active_target  = g_io.input_vel;
+        // Consigne bornée à la vitesse atteignable : au-delà le PID sature
+        // et l'intégrateur se charge au max sans jamais converger.
+        float vmax = (motor.velocity_limit < CFG_VEL_CMD_MAX) ? motor.velocity_limit
+                                                              : CFG_VEL_CMD_MAX;
+        g_active_target = _constrain(g_io.input_vel, -vmax, vmax);
         break;
+      }
       case CTRL_POSITION:
         motor.controller = MotionControlType::angle;
         g_active_target  = g_io.input_pos;
@@ -180,9 +200,11 @@ static void applyControl() {
         g_active_target = g_iSenseOk ? (g_io.input_torque / CFG_KT) : g_io.input_torque;
         break;
     }
-    if (g_io.vel_limit     > 0.0f) motor.velocity_limit = g_io.vel_limit;
-    if (g_io.current_limit > 0.0f) motor.current_limit  = g_io.current_limit;
-    if (g_io.pos_gain      > 0.0f) motor.P_angle.P      = g_io.pos_gain;
+    // Setters SimpleFOC : propagent aussi les limites aux PID internes
+    // (en foc_current, PID_velocity.limit = current_limit)
+    if (g_io.vel_limit     > 0.0f) motor.updateVelocityLimit(g_io.vel_limit);
+    if (g_io.current_limit > 0.0f) motor.updateCurrentLimit(g_io.current_limit);
+    if (g_io.pos_gain      > 0.0f) motor.P_angle.P = g_io.pos_gain;
 
     if (CFG_WATCHDOG_MS > 0 && (now - g_io.last_setpoint_ms) > CFG_WATCHDOG_MS) {
       g_io.axis_error |= ERR_WATCHDOG_EXPIRED;
@@ -194,8 +216,11 @@ static void applyControl() {
 }
 
 static void publishTelemetry() {
-  g_io.pos_rev = motor.shaft_angle / TWO_PI;
-  g_io.vel_rev = motor.shaft_velocity / TWO_PI;
+  // Lecture directe du capteur : motor.shaft_angle n'est rafraîchi qu'en RUN
+  // (par move()), et getAngle() donne l'angle multi-tours (convention ODrive).
+  float sgn = (motor.sensor_direction == Direction::CCW) ? -1.0f : 1.0f;
+  g_io.pos_rev = sgn * foc_sensor.getAngle() / TWO_PI;
+  g_io.vel_rev = sgn * foc_sensor.getVelocity() / TWO_PI;
   g_io.vbus    = readVbus();
   if (g_focReady && g_iSenseOk) {
     g_io.iq_setpoint = motor.current_sp;
@@ -224,14 +249,15 @@ static void FOCTask(void *) {
 
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    
-    // Forcer la lecture du capteur pour rafraîchir 'vel' même au repos (SAFE/idle)
-    sensor.update();
-    motor.shaft_velocity = sensor.getVelocity();
-    motor.shaft_angle = sensor.getMechanicalAngle();
 
-    if (!g_focReady || g_fault) continue;
-    motor.loopFOC();
+    // Ne JAMAIS écraser motor.shaft_angle/shaft_velocity ici : move() y stocke
+    // l'angle multi-tours filtré ; l'écraser mélange deux référentiels dans la
+    // télémétrie. Au repos on rafraîchit juste le capteur pour pos/vel.
+    if (!g_focReady || g_fault) {
+      foc_sensor.update();
+      continue;
+    }
+    motor.loopFOC();               // fait sensor.update() en interne
     motor.move(g_active_target);
   }
 }
@@ -314,8 +340,8 @@ static void SerialTask(void *) {
     Serial.print(" mode=");      Serial.print(g_io.control_mode);
     Serial.print(" tgt=");       Serial.print(g_active_target, 2);
     Serial.print(" Iq=");        Serial.print(g_io.iq_measured, 2);
-    Serial.print(" vel=");       Serial.print(motor.shaft_velocity, 2);
-    Serial.print(" pos=");       Serial.print(motor.shaft_angle, 2);
+    Serial.print(" vel=");       Serial.print(g_io.vel_rev * TWO_PI, 2);
+    Serial.print(" pos=");       Serial.print(g_io.pos_rev * TWO_PI, 2);
     Serial.print(" Vbus=");      Serial.print(g_io.vbus, 1);
     Serial.print(g_focReady ? " RUN" : (g_calibrated ? " idle" : " SAFE"));
     Serial.println(g_fault ? " [FAULT]" : "");
@@ -353,7 +379,7 @@ void setup() {
 #if SENSOR_TYPE == SENSOR_TYPE_HALL
   sensor.enableInterrupts(doHallA, doHallB, doHallC);
 #endif
-  motor.linkSensor(&sensor);
+  motor.linkSensor(&foc_sensor);
 
   // Driver Configuration
   driver.voltage_power_supply = CFG_VBUS_NOMINAL;
@@ -364,11 +390,16 @@ void setup() {
 
   // Lowside Current Sensing Configuration
   current_sense.linkDriver(&driver);
-  current_sense.skip_align = true; // On force l'alignement pour la mesure R/L
+  // skip_align=true SAUTE la vérification polarité/pins des shunts par initFOC.
+  // On ne la saute qu'une fois la config validée et figée (CFG_PRECALIBRATED) :
+  // une polarité inversée en foc_current = contre-réaction positive (emballement).
+  current_sense.skip_align = (CFG_PRECALIBRATED != 0);
   g_iSenseOk = (current_sense.init() == 1);
   if (g_iSenseOk) {
     motor.linkCurrentSense(&current_sense);
-    motor.torque_controller = TorqueControlType::voltage; // On commence par le voltage pour la mesure R/L
+    // Boucle de courant fermée : le PID vitesse sort des ampères et
+    // motor.current_limit devient effectif (en voltage il était ignoré).
+    motor.torque_controller = TorqueControlType::foc_current;
     motor.PID_current_q.P = CFG_CUR_P; motor.PID_current_q.I = CFG_CUR_I;
     motor.PID_current_d.P = CFG_CUR_P; motor.PID_current_d.I = CFG_CUR_I;
     motor.LPF_current_q.Tf = CFG_LPF_CUR_TF;

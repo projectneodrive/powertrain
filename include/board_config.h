@@ -106,6 +106,12 @@
 #define CFG_CURRENT_LIMIT  10.0f    // A (used once current sensing is enabled)
 #define CFG_VEL_LIMIT      100.0f   // rad/s
 
+// Consigne de vitesse max acceptée (rad/s) : ~90 % de la vitesse à vide
+// atteignable sous CFG_VOLT_LIMIT (KV en rpm/V -> *0.10472 en (rad/s)/V).
+// Au-delà, la consigne est physiquement inatteignable : le PID sature et
+// l'intégrateur se charge au max sans jamais converger.
+#define CFG_VEL_CMD_MAX    (0.9f * CFG_VOLT_LIMIT * CFG_KV * 0.10472f)
+
 // ---------------------------------------------------------------------------
 //  Current-sense hardware — VERIFY THESE ON YOUR CLONE (silkscreen/schematic).
 //  Shunt value and DRV8301 amp gain directly scale measured phase current.
@@ -173,9 +179,12 @@
 // ============================================================================
 //  Motion controller defaults (velocity / position modes over CAN)
 // ============================================================================
-#define CFG_VEL_P        0.05f
-#define CFG_VEL_I        0.80f
+// En foc_current la sortie du PID vitesse est un courant (A), plus une tension.
+// Points de départ à re-tuner sur banc.
+#define CFG_VEL_P        0.3f        // A/(rad/s)
+#define CFG_VEL_I        2.0f        // A/(rad·s⁻¹·s)
 #define CFG_VEL_D        0.0f
-#define CFG_VEL_RAMP     100.0f      // PID output ramp (V/s)
+#define CFG_VEL_RAMP     100.0f      // PID output ramp (A/s)
 #define CFG_POS_P        10.0f       // position P gain ((rad/s)/rad)
-#define CFG_LPF_VEL_TF   0.01f       // velocity low-pass (s) — smooths sensor noise
+#define CFG_LPF_VEL_TF   0.03f       // velocity low-pass (s) — vitesse hall quantifiée,
+                                     // filtrer plus fort que pour un encodeur
