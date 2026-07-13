@@ -138,10 +138,12 @@ A successful upload ends with something like `Programming Complete!` /
 3. On boot you should see it come up **disarmed / safe** (no motion):
    ```
    --- SimpleFOC + FreeRTOS + CANSimple ---
+   DRV8301 status1=0x0 gain_set=OK
+   Current sense OK -> foc_current torque control
    CAN up: node 0 @ 100000 bps
-   SAFE state (disarmed). Arm to calibrate + run:
-     CAN: Set_Axis_State(8)   or   serial: A
-   t=... #0 mode=1 tgt=0.00 vel=0.00 Vbus=... SAFE
+   SAFE state (disarmed). Send 'A' via serial or CAN CLOSED_LOOP state to arm.
+   Serial cmds: A arm | I idle | V<rad/s> | T<Nm> | M charac R/L | C clear | KP/KI/KD<v> vel PID | K show
+   t=... #0 mode=1 tgt=0.00 Iq=0.00 vel=0.00 pos=0.00 Vbus=... SAFE
    ```
    The status word at the end of each line is `SAFE` (never armed) → `RUN`
    (armed & running) → `idle` (calibrated but disarmed) → `[FAULT]`.
@@ -154,6 +156,8 @@ A successful upload ends with something like `Programming Complete!` /
      q‑axis volts in the voltage fallback)
    - `M` → measure phase resistance/inductance (motor must be free)
    - `I` → disarm (back to safe) &nbsp; `C` → clear a latched fault
+   - `KP0.3` / `KI2` / `KD0` → live‑tune the velocity PID (Nm per rad/s);
+     `K` alone re‑prints the gains currently applied
 
 > **New motor?** Do the one‑time commissioning in **[Calibration.md](Calibration.md)**
 > — measure `R`/`L` and the sensor offset/direction, save them into
@@ -311,7 +315,7 @@ Node 0 shown (`ID = command_id`). For another node, add `node_id << 5`.
 | `0x016` | Reboot | — | reset the MCU |
 | `0x006` | Set_Axis_Node_ID | `int32 node_id` | change this board's CAN address |
 | `0x01A` | Set_Pos_Gain | `float pos_gain` | position P gain |
-| `0x01B` | Set_Vel_Gains | `float vel_gain, float vel_int_gain` | velocity PI gains |
+| `0x01B` | Set_Vel_Gains | `float vel_gain(Nm/(rev/s)), float vel_int_gain` | velocity PI gains (ODrive units; converted to the internal A/(rad/s) via 2π and Kt) |
 
 ### Telemetry the board sends (← board)
 

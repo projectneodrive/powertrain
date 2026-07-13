@@ -23,7 +23,7 @@ find, how to measure them, and how to **save** them so the board boots ready.
 | 8 | Sensor direction | **Measure** (arm once) | `CFG_SENSOR_DIRECTION` |
 | 9 | Current / velocity / voltage limits | Your design | `CFG_CURRENT_LIMIT`, `CFG_VEL_LIMIT`, `CFG_VOLT_LIMIT` |
 | 10 | Current‑loop PID | Tune | `CFG_CUR_P`, `CFG_CUR_I` |
-| 11 | Velocity‑loop PID | Tune | `CFG_VEL_P`, `CFG_VEL_I` |
+| 11 | Velocity‑loop PID | Tune (live: serial `KP`/`KI`/`KD` or CAN `Set_Vel_Gains`) | `CFG_VEL_P`, `CFG_VEL_I` |
 
 Items 1–4 come from the **datasheet**; 5–8 are **measured by the board**; 9–11
 are your **design choices / tuning**.
@@ -42,8 +42,8 @@ directly, and **leave `CFG_PRECALIBRATED 0`** for now:
 
 ```c
 #define MOTOR_PRESET  MOTOR_PRESET_EBIKE   // or _BENCH, or set the fields by hand:
-// #define CFG_POLE_PAIRS 25
-// #define CFG_KV         9.38f
+// #define CFG_POLE_PAIRS 26
+// #define CFG_KV         8.2f
 #define SENSOR_TYPE   SENSOR_TYPE_HALL     // or SENSOR_TYPE_QUADRATURE
 // #define CFG_ENC_PPR 600                 // quadrature only
 #define CFG_PRECALIBRATED 0
@@ -91,32 +91,42 @@ Now flip the switch on and rebuild:
 ```c
 #define CFG_PRECALIBRATED 1
 ```
-Build + flash. The board now applies the saved offset/direction and **skips the
-sensor‑alignment sweep** — the rotor no longer has to rotate freely to arm, so
-you can arm with the wheel on the ground. (With current sensing on, `initFOC`
-still does a brief current‑sense check that may nudge the rotor slightly;
-eliminating that entirely — saving the current‑sense gains and skipping its
-align — is a further optimisation.) Re‑run steps 2–3 only if you change the
-motor, remount the sensor, or rewire the phases/halls.
+Build + flash. The board now applies the saved offset/direction and **skips both
+the sensor‑alignment sweep and the current‑sense verification** — the rotor no
+longer has to rotate freely to arm, so you can arm with the wheel on the ground.
+
+> The current‑sense check (`skip_align`) follows `CFG_PRECALIBRATED`: with `0`
+> the first arm verifies shunt polarity/pin order (and prints `CS: Inv B`,
+> `CS: Switch B-C`… if it had to correct something — if so, fix the wiring or
+> gains so a pre‑calibrated boot matches reality); with `1` it trusts the
+> configuration as‑is. Re‑run steps 2–3 only if you change the motor, remount
+> the sensor, or rewire the phases/halls.
 
 ## Step 5 — tune the control loops
 
 - **Current loop** (`CFG_CUR_P`, `CFG_CUR_I`): command a small torque (`T0.5`),
   watch `Iq=` track the setpoint smoothly (no buzz/oscillation). Raise `P` for
   faster response; back off if it whines.
-- **Velocity loop** (`CFG_VEL_P`, `CFG_VEL_I`): command a speed (`V20`), tune for
-  a firm, non‑oscillating response.
-- **Limits**: set `CFG_CURRENT_LIMIT` (A) for your motor/battery. `CFG_VOLT_LIMIT`
-  is a conservative **2 V** for bring‑up — **raise it toward Vbus** once the
+- **Velocity loop**: tune **live** over serial — `KP0.3`, `KI2`, `KD0` set the
+  velocity PID on the fly (`K` alone prints the applied gains; each change is
+  echoed as `[PID vel] P=… I=… D=…`). The same works over CAN with
+  `Set_Vel_Gains` (0x01B, ODrive units). Command a speed (`V5`), tune for a
+  firm, non‑oscillating response, then **save the result** into `CFG_VEL_P` /
+  `CFG_VEL_I` (units: A/(rad/s) — the echoed values) — gains are not persisted
+  across reboots.
+- **Limits**: set `CFG_CURRENT_LIMIT` (A) for your motor/battery. Keep
+  `CFG_VOLT_LIMIT` conservative for bring‑up — **raise it toward Vbus** once the
   current loop is trusted, otherwise the motor can't reach speed (BEMF eats the
-  voltage budget). `CFG_VEL_LIMIT` caps top speed.
+  voltage budget). `CFG_VEL_LIMIT` caps top speed, and velocity commands are
+  additionally clamped to `CFG_VEL_CMD_MAX` (~90 % of the no‑load speed under
+  `CFG_VOLT_LIMIT`) since asking for an unreachable speed only winds up the PID.
 
 ---
 
 ## Quick reference — one full example (`board_config.h`)
 
 ```c
-#define MOTOR_PRESET         MOTOR_PRESET_EBIKE   // 25 pp, KV 9.38
+#define MOTOR_PRESET         MOTOR_PRESET_EBIKE   // 26 pp, KV 8.2
 #define SENSOR_TYPE          SENSOR_TYPE_HALL
 #define CFG_CURRENT_LIMIT    15.0f
 #define CFG_VOLT_LIMIT       24.0f                // raised after bring-up

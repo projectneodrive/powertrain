@@ -91,8 +91,9 @@ void OdriveCAN::dispatch(uint8_t cmd, const CAN_message_t& m) {
       break;
 
     case CMD_SET_VEL_GAINS:
-      _io.vel_gain     = rd_f32(b);
-      _io.vel_int_gain = rd_f32(b + 4);
+      _io.vel_gain      = rd_f32(b) / TWO_PI;      // Nm/(rev/s) -> Nm/(rad/s)
+      _io.vel_int_gain  = rd_f32(b + 4) / TWO_PI;
+      _io.req_vel_gains = true;
       break;
 
     case CMD_CLEAR_ERRORS:

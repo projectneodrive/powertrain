@@ -35,6 +35,10 @@ The PlatformIO firmware project **is the repository root**.
 - ✅ ODrive CANSimple interface — torque / velocity / position, switchable at
   runtime; heartbeat + telemetry
 - ✅ Phase‑current sensing (DRV8301 + low‑side shunts) → `foc_current` torque control
+  with real current limiting (Vbus is read without disturbing the shunt ADC)
+- ✅ Hall angle interpolation (`SmoothingSensor`) — smooth commutation despite the
+  60°‑electrical hall resolution
+- ✅ **Live velocity‑PID tuning**: CAN `Set_Vel_Gains` (0x01B) or serial `KP`/`KI`/`KD`
 
 ### What SimpleFOC does today
 
@@ -59,6 +63,6 @@ an ESP32 native TWAI sender. The ESP32 sketch expects an external 3.3 V CAN
 transceiver such as the CJMCU-230.
 
 Two compile‑time switches there: **`MOTOR_PRESET`** (`BENCH` 7pp+encoder /
-`EBIKE` 25pp+hall) and **`SENSOR_TYPE`** (`SENSOR_TYPE_QUADRATURE` /
+`EBIKE` 26pp+hall) and **`SENSOR_TYPE`** (`SENSOR_TYPE_QUADRATURE` /
 `SENSOR_TYPE_HALL`). `SENSOR_TYPE` defaults from the preset but can be overridden
 in `platformio.ini` (`-D SENSOR_TYPE=SENSOR_TYPE_HALL`).
