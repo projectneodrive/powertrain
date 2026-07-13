@@ -10,6 +10,7 @@ and provides a small console for sending serial commands back to the controller.
 from __future__ import annotations
 
 import argparse
+import csv
 import queue
 import re
 import sys
@@ -45,6 +46,7 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
 
 
 KEY_VALUE_RE = re.compile(r"([A-Za-z_]+)=([^\s]+)")
+LOG_MAX_BLOCKS = 1000
 
 
 @dataclass
@@ -127,6 +129,7 @@ class PlotWindow(QtWidgets.QMainWindow):
         self.reader: Optional[SerialReader] = None
         self.samples: "queue.Queue[Optional[SerialMessage]]" = queue.Queue()
         self.current_port: Optional[str] = None
+        self.log_messages = deque(maxlen=LOG_MAX_BLOCKS)
 
         self.setWindowTitle(title)
         self.resize(1280, 860)
@@ -161,6 +164,7 @@ class PlotWindow(QtWidgets.QMainWindow):
         control_group = QtWidgets.QGroupBox("Controls")
         control_layout = QtWidgets.QGridLayout(control_group)
         self.start_stop_button = QtWidgets.QPushButton("Start")
+        self.save_log_button = QtWidgets.QPushButton("Save CSV")
         self.exit_button = QtWidgets.QPushButton("Exit")
         self.window_spin = QtWidgets.QDoubleSpinBox()
         self.window_spin.setRange(1.0, 300.0)
@@ -171,6 +175,7 @@ class PlotWindow(QtWidgets.QMainWindow):
         control_layout.addWidget(self.window_spin, 0, 1)
         control_layout.addWidget(self.start_stop_button, 1, 0)
         control_layout.addWidget(self.exit_button, 1, 1)
+        control_layout.addWidget(self.save_log_button, 2, 0, 1, 2)
 
         command_group = QtWidgets.QGroupBox("Serial Commands")
         command_layout = QtWidgets.QVBoxLayout(command_group)
@@ -196,7 +201,7 @@ class PlotWindow(QtWidgets.QMainWindow):
         logs_layout = QtWidgets.QVBoxLayout(logs_group)
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setReadOnly(True)
-        self.log_view.setMaximumBlockCount(1000)
+        self.log_view.setMaximumBlockCount(LOG_MAX_BLOCKS)
         self.log_view.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
         logs_layout.addWidget(self.log_view)
 
@@ -243,6 +248,7 @@ class PlotWindow(QtWidgets.QMainWindow):
         self.refresh_button.clicked.connect(self.refresh_ports)
         self.connect_button.clicked.connect(self.toggle_connection)
         self.start_stop_button.clicked.connect(self.toggle_start_stop)
+        self.save_log_button.clicked.connect(self.save_logs_csv)
         self.exit_button.clicked.connect(self.close)
         self.send_button.clicked.connect(self.send_from_edit)
         self.command_edit.returnPressed.connect(self.send_from_edit)
@@ -290,11 +296,36 @@ class PlotWindow(QtWidgets.QMainWindow):
 
     def append_log(self, line: str) -> None:
         if not line[0] in ("t"):
+            self.log_messages.append(SerialMessage(time.time(), line, None))
             self.log_view.appendPlainText(line)
             cursor = self.log_view.textCursor()
             cursor.movePosition(QtGui.QTextCursor.MoveOperation.End)
             self.log_view.setTextCursor(cursor)
             self.log_view.ensureCursorVisible()
+
+    def save_logs_csv(self) -> None:
+        path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save serial logs as CSV",
+            "serial_logs.csv",
+            "CSV Files (*.csv);;All Files (*)",
+        )
+        if not path:
+            return
+
+        if not path.lower().endswith(".csv"):
+            path += ".csv"
+
+        fieldnames = ["timestamp_s", "raw_line", "t", "mode", "tgt", "Iq", "vel", "pos", "Vbus"]
+        with open(path, "w", newline="", encoding="utf-8") as file_handle:
+            writer = csv.DictWriter(file_handle, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            for message in self.log_messages:
+                row = {"timestamp_s": message.timestamp_s, "raw_line": message.raw_line}
+                if message.fields:
+                    row.update(message.fields)
+                writer.writerow(row)
+        self.update_status(f"Saved {len(self.log_messages)} log lines to {path}")
 
     def set_connection_controls(self, connected: bool) -> None:
         self.connect_button.setText("Disconnect" if connected else "Connect")
@@ -402,6 +433,7 @@ class PlotWindow(QtWidgets.QMainWindow):
                 self.update_status("Serial connection ended")
                 return
 
+            self.log_messages.append(item)
             self.append_log(item.raw_line)
 
             if item.fields is None:
