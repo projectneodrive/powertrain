@@ -88,16 +88,21 @@ static void onFocTick() {
 // ============================================================================
 //  Logic Helpers
 // ============================================================================
+// Définie dans SimpleFOC (stm32_adc_utils.cpp) mais absente de son header :
+// lit un canal régulier sur l'ADC déjà utilisé par le current sense SANS le
+// désinitialiser. analogRead() est INTERDIT sur PA6 : STM32duino fait
+// HAL_ADC_DeInit sur ADC1 à chaque appel, ce qui tue les conversions
+// injectées des shunts (courants figés -> échec de l'alignement).
+float _readRegularADCVoltage(const int pin);
+
 static float readVbus() {
-  // analogRead reconfigure l'ADC à chaque appel ; PA6 peut partager l'ADC des
-  // conversions injectées du current sense (foc_current). On échantillonne à
-  // 10 Hz et on sert la valeur en cache pour limiter les collisions.
   static float    v_cache = 0.0f;
   static uint32_t t_last  = 0;
   uint32_t now = millis();
   if (v_cache == 0.0f || (now - t_last) >= 100) {
-    t_last  = now;
-    v_cache = (float)analogRead(PIN_VBUS) * (3.3f / 4095.0f) * CFG_VBUS_DIV;
+    t_last = now;
+    float v = _readRegularADCVoltage(PIN_VBUS);   // volts; -1.0f si erreur
+    if (v >= 0.0f) v_cache = v * CFG_VBUS_DIV;
   }
   return v_cache;
 }
