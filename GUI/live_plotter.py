@@ -164,6 +164,7 @@ class PlotWindow(QtWidgets.QMainWindow):
         control_group = QtWidgets.QGroupBox("Controls")
         control_layout = QtWidgets.QGridLayout(control_group)
         self.start_stop_button = QtWidgets.QPushButton("Start")
+        self.clear_button = QtWidgets.QPushButton("Clear Graphs + Monitor")
         self.save_log_button = QtWidgets.QPushButton("Save CSV")
         self.exit_button = QtWidgets.QPushButton("Exit")
         self.window_spin = QtWidgets.QDoubleSpinBox()
@@ -175,7 +176,8 @@ class PlotWindow(QtWidgets.QMainWindow):
         control_layout.addWidget(self.window_spin, 0, 1)
         control_layout.addWidget(self.start_stop_button, 1, 0)
         control_layout.addWidget(self.exit_button, 1, 1)
-        control_layout.addWidget(self.save_log_button, 2, 0, 1, 2)
+        control_layout.addWidget(self.clear_button, 2, 0, 1, 2)
+        control_layout.addWidget(self.save_log_button, 3, 0, 1, 2)
 
         command_group = QtWidgets.QGroupBox("Serial Commands")
         command_layout = QtWidgets.QVBoxLayout(command_group)
@@ -248,6 +250,7 @@ class PlotWindow(QtWidgets.QMainWindow):
         self.refresh_button.clicked.connect(self.refresh_ports)
         self.connect_button.clicked.connect(self.toggle_connection)
         self.start_stop_button.clicked.connect(self.toggle_start_stop)
+        self.clear_button.clicked.connect(self.clear_graphs_and_monitor)
         self.save_log_button.clicked.connect(self.save_logs_csv)
         self.exit_button.clicked.connect(self.close)
         self.send_button.clicked.connect(self.send_from_edit)
@@ -326,6 +329,23 @@ class PlotWindow(QtWidgets.QMainWindow):
                     row.update(message.fields)
                 writer.writerow(row)
         self.update_status(f"Saved {len(self.log_messages)} log lines to {path}")
+
+    def clear_graphs_and_monitor(self) -> None:
+        self.series = build_series(self.capacity)
+        self.t0 = None
+        self.log_messages.clear()
+        self.log_view.clear()
+
+        for line in (self.line_tgt, self.line_iq, self.line_vel, self.line_pos, self.line_vbus):
+            line.set_data([], [])
+
+        for ax in self.axes:
+            ax.set_xlim(0.0, max(1.0, self.window_s))
+            ax.relim()
+            ax.autoscale_view(scalex=False, scaley=True)
+
+        self.canvas.draw_idle()
+        self.update_status("Cleared graphs and serial monitor")
 
     def set_connection_controls(self, connected: bool) -> None:
         self.connect_button.setText("Disconnect" if connected else "Connect")
@@ -462,15 +482,26 @@ class PlotWindow(QtWidgets.QMainWindow):
         if not self.series["t_ms"]:
             return
 
-        x = list(self.series["t_ms"])
-        self.line_tgt.set_data(x, list(self.series["tgt"]))
-        self.line_iq.set_data(x, list(self.series["iq"]))
-        self.line_vel.set_data(x, list(self.series["vel"]))
-        self.line_pos.set_data(x, list(self.series["pos"]))
-        self.line_vbus.set_data(x, list(self.series["vbus"]))
+        x_all = list(self.series["t_ms"])
+        latest_t = x_all[-1]
+        cutoff = latest_t - self.window_s
 
-        xmin = max(0.0, x[-1] - self.window_s)
-        xmax = max(self.window_s * 0.1, x[-1])
+        indices = [index for index, value in enumerate(x_all) if value >= cutoff]
+        x = [x_all[index] - cutoff for index in indices]
+        tgt = [self.series["tgt"][index] for index in indices]
+        iq = [self.series["iq"][index] for index in indices]
+        vel = [self.series["vel"][index] for index in indices]
+        pos = [self.series["pos"][index] for index in indices]
+        vbus = [self.series["vbus"][index] for index in indices]
+
+        self.line_tgt.set_data(x, tgt)
+        self.line_iq.set_data(x, iq)
+        self.line_vel.set_data(x, vel)
+        self.line_pos.set_data(x, pos)
+        self.line_vbus.set_data(x, vbus)
+
+        xmin = 0.0
+        xmax = max(self.window_s, x[-1] if x else self.window_s)
         for ax in self.axes:
             ax.set_xlim(xmin, xmax)
             ax.relim()
@@ -479,7 +510,7 @@ class PlotWindow(QtWidgets.QMainWindow):
         last_mode = self.series["mode"][-1]
         if self.current_port and updated:
             self.update_status(
-                f"Port {self.current_port} | samples={len(x)} | last t={x[-1]:.2f}s | mode={last_mode:g}"
+                f"Port {self.current_port} | samples={len(x)} | last t={latest_t:.2f}s | mode={last_mode:g}"
             )
         self.canvas.draw_idle()
 
