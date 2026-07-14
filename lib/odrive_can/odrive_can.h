@@ -83,8 +83,10 @@ struct AxisIO {
   volatile float    vel_limit        = 0.0f;    // rad/s
   volatile float    current_limit    = 0.0f;    // A
   volatile float    pos_gain         = 0.0f;    // (rad/s)/rad
-  volatile float    vel_gain         = 0.0f;    // request; see main mapping note
-  volatile float    vel_int_gain     = 0.0f;
+  volatile float    vel_gain         = 0.0f;    // Nm/(rad/s)   — PID vitesse P
+  volatile float    vel_int_gain     = 0.0f;    // Nm/(rad/s)/s — PID vitesse I
+  volatile float    vel_d_gain       = 0.0f;    // Nm/(rad/s²)  — PID vitesse D (série uniquement)
+  volatile bool     req_vel_gains    = false;   // gains modifiés -> à appliquer
   volatile uint32_t last_setpoint_ms = 0;       // watchdog feed
   volatile bool     req_reboot       = false;
   volatile bool     req_clear_errors = false;

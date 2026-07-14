@@ -57,7 +57,7 @@
 //  to override (e.g. -D MOTOR_PRESET=MOTOR_PRESET_EBIKE).
 // ============================================================================
 #define MOTOR_PRESET_BENCH   1   // 7pp drone motor + 600 PPR quadrature encoder
-#define MOTOR_PRESET_EBIKE   2   // 25pp hub motor + hall sensors
+#define MOTOR_PRESET_EBIKE   2   // 26pp hub motor + hall sensors
 
 #ifndef MOTOR_PRESET
 #define MOTOR_PRESET MOTOR_PRESET_EBIKE

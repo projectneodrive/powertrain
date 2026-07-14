@@ -130,6 +130,20 @@ static void applyControl() {
     Serial.println("[OK] Erreurs réinitialisées.");
   }
   
+  // --- Gains PID vitesse (CAN Set_Vel_Gains ou série KP/KI/KD) ---
+  if (g_io.req_vel_gains) {
+    g_io.req_vel_gains = false;
+    // g_io.* en Nm/(rad/s) ; en foc_current le PID sort des ampères -> /Kt.
+    // En fallback voltage la valeur est appliquée telle quelle (volts).
+    float k = g_iSenseOk ? (1.0f / CFG_KT) : 1.0f;
+    motor.PID_velocity.P = g_io.vel_gain     * k;
+    motor.PID_velocity.I = g_io.vel_int_gain * k;
+    motor.PID_velocity.D = g_io.vel_d_gain   * k;
+    Serial.print("[PID vel] P="); Serial.print(motor.PID_velocity.P, 4);
+    Serial.print(" I=");          Serial.print(motor.PID_velocity.I, 4);
+    Serial.print(" D=");          Serial.println(motor.PID_velocity.D, 5);
+  }
+
   // Sécurité globale simplifiée (la SafetyTask gère le hardware)
   bool safe = !g_io.estop && !g_fault;
 
@@ -327,6 +341,17 @@ static void handleSerial() {
             g_io.last_setpoint_ms = millis(); break;
           case 'C': case 'c':
             g_io.req_clear_errors = true; g_io.estop = false; break;
+          case 'K': case 'k':
+            // KP/KI/KD<val> : gains PID vitesse en Nm/(rad/s) ; 'K' seul
+            // ré-applique et affiche les gains courants.
+            v = atof(buf + 2);
+            switch (buf[1]) {
+              case 'P': case 'p': g_io.vel_gain     = v; break;
+              case 'I': case 'i': g_io.vel_int_gain = v; break;
+              case 'D': case 'd': g_io.vel_d_gain   = v; break;
+            }
+            g_io.req_vel_gains = true;
+            break;
         }
       }
       idx = 0;
@@ -444,6 +469,14 @@ void setup() {
   g_io.input_vel     = 0.0f;
   g_io.vel_limit     = CFG_VEL_LIMIT;
   g_io.current_limit = CFG_CURRENT_LIMIT;
+  // Miroirs des gains vitesse en Nm/(rad/s), inverse exact de l'application
+  // dans applyControl() (les CFG_* sont en A/(rad/s), ou en V en fallback)
+  {
+    float k = g_iSenseOk ? CFG_KT : 1.0f;
+    g_io.vel_gain     = CFG_VEL_P * k;
+    g_io.vel_int_gain = CFG_VEL_I * k;
+    g_io.vel_d_gain   = CFG_VEL_D * k;
+  }
   g_io.last_setpoint_ms = millis();
 
   // CAN Simple Bus Start
@@ -462,6 +495,7 @@ void setup() {
   }
 
   Serial.println("SAFE state (disarmed). Send 'A' via serial or CAN CLOSED_LOOP state to arm.");
+  Serial.println("Serial cmds: A arm | I idle | V<rad/s> | T<Nm> | M charac R/L | C clear | KP/KI/KD<v> vel PID | K show");
   vTaskStartScheduler();
   for (;;) {}
 }
