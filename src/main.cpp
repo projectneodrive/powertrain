@@ -324,32 +324,83 @@ static void handleSerial() {
       buf[idx] = '\0';
       if (idx > 0) {
         float v = atof(buf + 1);
+        // Acknowledge (AK) : réponse synchrone, sans timestamp, montrant
+        // l'ancienne -> la nouvelle valeur (ou l'accusé de réception).
         switch (buf[0]) {
-          case 'A': case 'a':
+          case 'A': case 'a': {
+            bool old = g_io.armed;
             g_io.estop = false; g_io.armed = true;
-            g_io.last_setpoint_ms = millis(); break;
-          case 'I': case 'i':
-            g_io.armed = false; break;
+            g_io.last_setpoint_ms = millis();
+            Serial.print("AK A: armed "); Serial.print((int)old);
+            Serial.print(" -> ");         Serial.println((int)g_io.armed);
+            break;
+          }
+          case 'I': case 'i': {
+            bool old = g_io.armed;
+            g_io.armed = false;
+            Serial.print("AK I: armed "); Serial.print((int)old);
+            Serial.print(" -> ");         Serial.println((int)g_io.armed);
+            break;
+          }
           case 'M': case 'm':
-            g_io.req_characterise = true; break;
-          case 'T': case 't':
+            g_io.req_characterise = true;
+            Serial.println("AK M: characterise requested");
+            break;
+          case 'T': case 't': {
+            float old = g_io.input_torque;
             g_io.control_mode = CTRL_TORQUE;   g_io.input_torque = v;
-            g_io.last_setpoint_ms = millis(); break;
-          case 'V': case 'v':
+            g_io.last_setpoint_ms = millis();
+            Serial.print("AK T: torque "); Serial.print(old, 2);
+            Serial.print(" -> ");          Serial.print(v, 2);
+            Serial.println(" Nm");
+            break;
+          }
+          case 'V': case 'v': {
+            float old = g_io.input_vel;
             g_io.control_mode = CTRL_VELOCITY; g_io.input_vel = v;
-            g_io.last_setpoint_ms = millis(); break;
+            g_io.last_setpoint_ms = millis();
+            Serial.print("AK V: vel "); Serial.print(old, 2);
+            Serial.print(" -> ");       Serial.print(v, 2);
+            Serial.println(" rad/s");
+            break;
+          }
           case 'C': case 'c':
-            g_io.req_clear_errors = true; g_io.estop = false; break;
-          case 'K': case 'k':
+            g_io.req_clear_errors = true; g_io.estop = false;
+            Serial.println("AK C: clear-errors requested");
+            break;
+          case 'K': case 'k': {
             // KP/KI/KD<val> : gains PID vitesse en Nm/(rad/s) ; 'K' seul
             // ré-applique et affiche les gains courants.
             v = atof(buf + 2);
             switch (buf[1]) {
-              case 'P': case 'p': g_io.vel_gain     = v; break;
-              case 'I': case 'i': g_io.vel_int_gain = v; break;
-              case 'D': case 'd': g_io.vel_d_gain   = v; break;
+              case 'P': case 'p': {
+                float old = g_io.vel_gain;     g_io.vel_gain     = v;
+                Serial.print("AK KP: vel_gain ");     Serial.print(old, 4);
+                Serial.print(" -> ");                 Serial.println(v, 4);
+                break;
+              }
+              case 'I': case 'i': {
+                float old = g_io.vel_int_gain; g_io.vel_int_gain = v;
+                Serial.print("AK KI: vel_int_gain "); Serial.print(old, 4);
+                Serial.print(" -> ");                 Serial.println(v, 4);
+                break;
+              }
+              case 'D': case 'd': {
+                float old = g_io.vel_d_gain;   g_io.vel_d_gain   = v;
+                Serial.print("AK KD: vel_d_gain ");   Serial.print(old, 5);
+                Serial.print(" -> ");                 Serial.println(v, 5);
+                break;
+              }
+              default:
+                Serial.println("AK K: reapply vel gains");
+                break;
             }
             g_io.req_vel_gains = true;
+            break;
+          }
+          default:
+            Serial.print("AK ?: unknown '"); Serial.print(buf[0]);
+            Serial.println("'");
             break;
         }
       }
