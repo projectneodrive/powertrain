@@ -101,7 +101,7 @@
 // ---------------------------------------------------------------------------
 #define CFG_VBUS_NOMINAL   24.0f    // driver.voltage_power_supply
 #define CFG_PWM_FREQ_HZ    20000    // 20 kHz (matches FOC tick; keeps sense window sane)
-#define CFG_VOLT_LIMIT     15.0f     // motor/driver voltage limit (safety)
+#define CFG_VOLT_LIMIT     20.0f     // motor/driver voltage limit (safety)
 #define CFG_VOLT_ALIGN     5.0f     // voltage used during initFOC alignment
 #define CFG_CURRENT_LIMIT  10.0f    // A (used once current sensing is enabled)
 #define CFG_VEL_LIMIT      100.0f   // rad/s
@@ -122,8 +122,8 @@
 
 // FOC current-loop PID + measurement filter (foc_current torque mode).
 // Starting points — expect to bench-tune per motor.
-#define CFG_CUR_P          0.02f     // current PID P (V/A)
-#define CFG_CUR_I          0.40f   // current PID I
+#define CFG_CUR_P          0.03f     // current PID P (V/A)
+#define CFG_CUR_I          1.0f   // current PID I
 #define CFG_LPF_CUR_TF     0.01f   // current measurement low-pass (s)
 #define CFG_CHAR_VOLTAGE   1.0f     // voltage used by characteriseMotor() for R/L
 
