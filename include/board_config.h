@@ -122,7 +122,7 @@
 
 // FOC current-loop PID + measurement filter (foc_current torque mode).
 // Starting points — expect to bench-tune per motor.
-#define CFG_CUR_P          0.03f     // current PID P (V/A)
+#define CFG_CUR_P          0.04f     // current PID P (V/A)
 #define CFG_CUR_I          1.0f   // current PID I
 #define CFG_LPF_CUR_TF     0.01f   // current measurement low-pass (s)
 #define CFG_CHAR_VOLTAGE   1.0f     // voltage used by characteriseMotor() for R/L
@@ -181,8 +181,8 @@
 // ============================================================================
 // En foc_current la sortie du PID vitesse est un courant (A), plus une tension.
 // Points de départ à re-tuner sur banc.
-#define CFG_VEL_P        0.3f        // A/(rad/s)
-#define CFG_VEL_I        2.0f        // A/(rad·s⁻¹·s)
+#define CFG_VEL_P        0.003f        // A/(rad/s)
+#define CFG_VEL_I        0.5f        // A/(rad·s⁻¹·s)
 #define CFG_VEL_D        0.0f
 #define CFG_VEL_RAMP     100.0f      // PID output ramp (A/s)
 #define CFG_POS_P        10.0f       // position P gain ((rad/s)/rad)
