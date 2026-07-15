@@ -1,13 +1,21 @@
-"""Qt live plotter and serial command console for the powertrain firmware (Optimized).
+"""Qt live plotter and serial command console for the powertrain firmware (v2, high-performance).
 
-Performance optimizations:
-- NumPy buffers for data storage (5-20x faster)
-- Smart auto-scaling without relim() overhead
-- Blitting for matplotlib updates (3-10x faster)
-- Fast custom parser (2x faster)
-- Reduced unnecessary redraws
-- 100ms timer for CPU efficiency (2x CPU)
-- Optimized Qt logging with batch updates (2-4x faster)
+Optimisations majeures par rapport à la version précédente :
+- pyqtgraph au lieu de matplotlib : rendu GPU-friendly, 10-50x plus rapide pour
+  du tracé temps réel (matplotlib redessine TOUTE la figure à chaque frame).
+- Lecture série par blocs (ser.read(in_waiting)) au lieu de readline() :
+  beaucoup moins d'appels système à haut débit.
+- Ring buffer NumPy "miroir" (buffer doublé) : extraction des données ordonnées
+  sans copie ni tri, et correction du bug d'ordre après wraparound.
+- np.searchsorted (O(log n)) pour la fenêtre temporelle au lieu d'un masque
+  booléen (O(n) + copie) à chaque frame.
+- Downsampling "peak" + clipToView de pyqtgraph : le nombre de points tracés
+  reste borné quelle que soit la taille du buffer.
+- Timer d'affichage à 30 FPS découplé de l'acquisition (le thread série
+  n'est jamais bloqué par le rendu).
+- Auto-range Y natif pyqtgraph (throttlé en interne), axe X piloté manuellement.
+
+Dépendances : pip install pyserial PySide6 pyqtgraph numpy
 """
 
 from __future__ import annotations
@@ -28,30 +36,37 @@ try:
     import serial
     from serial.tools import list_ports
 except ImportError as exc:  # pragma: no cover - handled at runtime
-    raise SystemExit(
-        "pyserial is required. Install it with: pip install pyserial"
-    ) from exc
-
-try:
-    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-    from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
-    from matplotlib.figure import Figure
-except ImportError as exc:  # pragma: no cover - handled at runtime
-    raise SystemExit(
-        "matplotlib Qt support is required. Install PySide6 and matplotlib."
-    ) from exc
+    raise SystemExit("pyserial is required. Install it with: pip install pyserial") from exc
 
 try:
     from PySide6 import QtCore, QtGui, QtWidgets
 except ImportError as exc:  # pragma: no cover - handled at runtime
+    raise SystemExit("PySide6 is required. Install it with: pip install PySide6") from exc
+
+try:
+    import pyqtgraph as pg
+except ImportError as exc:  # pragma: no cover - handled at runtime
     raise SystemExit(
-        "PySide6 is required. Install it with: pip install PySide6"
+        "pyqtgraph is required for fast plotting. Install it with: pip install pyqtgraph"
     ) from exc
 
 
 LOG_MAX_BLOCKS = 1000
-BATCH_LOG_SIZE = 10  # Batch log updates for performance
-AUTO_SCALE_PADDING = 0.1  # 10% padding for auto-scaling
+GUI_UPDATE_MS = 33          # ~30 FPS pour un affichage fluide
+LOG_FLUSH_MS = 100          # flush des logs (moins critique que le tracé)
+STATUS_UPDATE_MS = 250      # le label de statut n'a pas besoin de 30 FPS
+
+# Canaux stockés dans le ring buffer (ordre fixe)
+CH_T, CH_TGT, CH_IQ, CH_VEL, CH_POS, CH_VBUS, CH_MODE = range(7)
+N_CHANNELS = 7
+
+PLOT_DEFS = [
+    ("Target", "#f97316", CH_TGT),
+    ("Iq [A]", "#22c55e", CH_IQ),
+    ("Vel [rad/s]", "#3b82f6", CH_VEL),
+    ("Pos [rad]", "#a855f7", CH_POS),
+    ("Vbus [V]", "#ef4444", CH_VBUS),
+]
 
 
 @dataclass
@@ -61,60 +76,125 @@ class SerialMessage:
     fields: Optional[Dict[str, float]]
 
 
-# Optimized fast parser using manual parsing instead of regex
 def fast_parse_line(line: str) -> Optional[Dict[str, float]]:
-    """Fast manual parser for telemetry lines (2x faster than regex)."""
+    """Fast manual parser for 'key=value key=value' telemetry lines."""
     fields: Dict[str, float] = {}
     i = 0
     n = len(line)
-    
+
     while i < n:
-        # Skip whitespace
-        while i < n and line[i] in ' \t':
+        while i < n and line[i] in " \t":
             i += 1
         if i >= n:
             break
-            
-        # Parse key
+
         start = i
-        while i < n and (line[i].isalnum() or line[i] == '_'):
+        while i < n and (line[i].isalnum() or line[i] == "_"):
             i += 1
         if i == start:
             i += 1
             continue
-            
         key = line[start:i]
-        
-        # Expect '='
-        while i < n and line[i] in ' \t':
+
+        while i < n and line[i] in " \t":
             i += 1
-        if i >= n or line[i] != '=':
+        if i >= n or line[i] != "=":
             continue
         i += 1
-        
-        # Parse value
-        while i < n and line[i] in ' \t':
+
+        while i < n and line[i] in " \t":
             i += 1
         start = i
-        while i < n and line[i] not in ' \t':
+        while i < n and line[i] not in " \t":
             i += 1
         if i == start:
             continue
-            
-        value_str = line[start:i]
+
         try:
-            fields[key] = float(value_str)
+            fields[key] = float(line[start:i])
         except ValueError:
             continue
-            
+
     return fields or None
 
 
-def list_serial_ports() -> List[str]:
-    return [port.device for port in list_ports.comports()]
+@dataclass
+class PortInfo:
+    device: str
+    description: str
+    score: int  # score de priorité pour l'auto-sélection (ESP32/STM32)
+
+
+# (mots-clés dans la description/le fabricant, VID USB) -> score
+_KNOWN_TARGETS = [
+    # STM32 : VCP natif ou ST-Link (VID STMicroelectronics 0x0483)
+    (("stm32", "stlink", "st-link", "stmicroelectronics"), 0x0483, 100),
+    # ESP32 : USB-JTAG natif Espressif (VID 0x303A)
+    (("esp32", "espressif", "usb jtag"), 0x303A, 100),
+    # Ponts USB-série typiques des cartes ESP32 (CP210x Silicon Labs, CH340/CH9102 WCH)
+    (("cp210", "silicon labs",), 0x10C4, 80),
+    (("ch340", "ch910", "wch",), 0x1A86, 80),
+    # FTDI : fréquent sur les cartes de dev, priorité moindre
+    (("ftdi", "ft232"), 0x0403, 50),
+]
+
+
+def _score_port(port) -> int:
+    text = " ".join(
+        s.lower() for s in (port.description or "", port.manufacturer or "", port.product or "") if s
+    )
+    best = 0
+    for keywords, vid, score in _KNOWN_TARGETS:
+        if (port.vid is not None and port.vid == vid) or any(k in text for k in keywords):
+            best = max(best, score)
+    return best
+
+
+def list_serial_ports() -> List[PortInfo]:
+    infos = []
+    for port in list_ports.comports():
+        desc = (port.description or "").strip()
+        if desc.lower() in ("", "n/a"):
+            desc = port.manufacturer or ""
+        infos.append(PortInfo(port.device, desc, _score_port(port)))
+    return infos
+
+
+class MirroredRingBuffer:
+    """Ring buffer NumPy 'miroir' : chaque échantillon est écrit deux fois
+    (à idx et idx+capacity), ce qui permet d'obtenir une vue CONTIGUË et
+    ORDONNÉE des données sans copie ni np.concatenate, même après wraparound.
+    """
+
+    def __init__(self, capacity: int, n_channels: int):
+        self.capacity = capacity
+        self.data = np.zeros((n_channels, 2 * capacity), dtype=np.float64)
+        self.idx = 0
+        self.count = 0
+
+    def append(self, values: np.ndarray) -> None:
+        i = self.idx
+        self.data[:, i] = values
+        self.data[:, i + self.capacity] = values
+        self.idx = (i + 1) % self.capacity
+        if self.count < self.capacity:
+            self.count += 1
+
+    def ordered_view(self) -> np.ndarray:
+        """Vue (n_channels, count) des échantillons du plus ancien au plus récent."""
+        if self.count < self.capacity:
+            return self.data[:, : self.count]
+        return self.data[:, self.idx : self.idx + self.capacity]
+
+    def clear(self) -> None:
+        self.idx = 0
+        self.count = 0
 
 
 class SerialReader(threading.Thread):
+    """Thread de lecture série optimisé : lit par blocs (in_waiting) au lieu
+    de readline(), et parse les lignes hors du thread GUI."""
+
     def __init__(self, port: str, baud: int, output: "queue.Queue[Optional[SerialMessage]]"):
         super().__init__(daemon=True)
         self.port = port
@@ -122,73 +202,63 @@ class SerialReader(threading.Thread):
         self.output = output
         self.stop_event = threading.Event()
         self.serial_port: Optional[serial.Serial] = None
+        self._write_lock = threading.Lock()
 
     def run(self) -> None:
+        buf = b""
         try:
-            with serial.Serial(self.port, self.baud, timeout=0.1) as ser:
+            with serial.Serial(self.port, self.baud, timeout=0.05) as ser:
                 self.serial_port = ser
                 ser.reset_input_buffer()
                 while not self.stop_event.is_set():
-                    raw = ser.readline()
-                    if not raw:
+                    # Lecture par blocs : draine tout ce qui est disponible
+                    chunk = ser.read(ser.in_waiting or 1)
+                    if not chunk:
                         continue
-                    try:
+                    buf += chunk
+                    if b"\n" not in buf:
+                        continue
+                    *lines, buf = buf.split(b"\n")
+                    now = time.time()
+                    for raw in lines:
                         line = raw.decode("utf-8", errors="replace").strip()
-                    except Exception:
-                        continue
-                    fields = fast_parse_line(line)
-                    self.output.put(SerialMessage(time.time(), line, fields))
+                        if not line:
+                            continue
+                        fields = fast_parse_line(line)
+                        self.output.put(SerialMessage(now, line, fields))
         except Exception as exc:
             self.output.put(None)
             print(f"Serial reader stopped: {exc}", file=sys.stderr)
+        finally:
+            self.serial_port = None
 
     def stop(self) -> None:
         self.stop_event.set()
 
     def write_line(self, text: str) -> None:
-        if self.serial_port is None:
+        ser = self.serial_port
+        if ser is None:
             raise RuntimeError("Serial port is not open")
-        self.serial_port.write((text.rstrip("\r\n") + "\n").encode("utf-8"))
+        with self._write_lock:
+            ser.write((text.rstrip("\r\n") + "\n").encode("utf-8"))
 
 
 class PlotWindow(QtWidgets.QMainWindow):
     def __init__(self, window_s: float, title: str, baud: int, initial_port: Optional[str]):
         super().__init__()
         self.window_s = window_s
-        self.capacity = max(100, int(window_s * 200))
-        
-        # Use NumPy arrays for data storage
-        self.data_size = self.capacity
-        self.x_data = np.zeros(self.data_size)
-        self.tgt_data = np.zeros(self.data_size)
-        self.iq_data = np.zeros(self.data_size)
-        self.vel_data = np.zeros(self.data_size)
-        self.pos_data = np.zeros(self.data_size)
-        self.vbus_data = np.zeros(self.data_size)
-        self.mode_data = np.zeros(self.data_size)
-        self.data_count = 0
-        
-        # Track data ranges for auto-scaling
-        self.tgt_min = 0.0
-        self.tgt_max = 1.0
-        self.iq_min = -1.0
-        self.iq_max = 1.0
-        self.vel_min = -1.0
-        self.vel_max = 1.0
-        self.pos_min = -1.0
-        self.pos_max = 1.0
-        self.vbus_min = 0.0
-        self.vbus_max = 30.0
-        
+        # Capacité dimensionnée large (jusqu'à ~1 kHz de télémétrie sur la fenêtre max)
+        capacity = max(2000, int(300.0 * 1000))
+        self.buffer = MirroredRingBuffer(capacity, N_CHANNELS)
+
         self.t0: Optional[float] = None
         self.reader: Optional[SerialReader] = None
         self.samples: "queue.Queue[Optional[SerialMessage]]" = queue.Queue()
         self.current_port: Optional[str] = None
-        self.log_messages = deque(maxlen=LOG_MAX_BLOCKS)
+        self.log_messages: deque[SerialMessage] = deque(maxlen=100_000)
         self.pending_logs: List[str] = []
-        self.log_timer: Optional[QtCore.QTimer] = None
-        self._last_update_time = 0
-        self._needs_redraw = False
+        self._sample_scratch = np.zeros(N_CHANNELS)
+        self._last_status = 0.0
 
         self.setWindowTitle(title)
         self.resize(1280, 860)
@@ -200,45 +270,36 @@ class PlotWindow(QtWidgets.QMainWindow):
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         main_layout.addWidget(splitter)
 
-        # Left panel setup
         left_panel = self._create_left_panel()
-        
-        # Plot setup
-        plot_widget = self._create_plot_widget()
-        
+        plot_widget = self._create_plot_widget(title)
+
         splitter.addWidget(left_panel)
         splitter.addWidget(plot_widget)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         self.setMinimumWidth(1100)
 
-        # Connect signals
         self._connect_signals()
-        
-        # Setup log batching timer
+
+        # Timer de flush des logs (découplé du tracé)
         self.log_timer = QtCore.QTimer(self)
-        self.log_timer.setInterval(50)  # Flush logs every 50ms
+        self.log_timer.setInterval(LOG_FLUSH_MS)
         self.log_timer.timeout.connect(self._flush_logs)
         self.log_timer.start()
 
-        # Timer for data processing (100ms for CPU efficiency)
+        # Timer d'affichage ~30 FPS
         self.timer = QtCore.QTimer(self)
-        self.timer.setInterval(100)
+        self.timer.setInterval(GUI_UPDATE_MS)
         self.timer.timeout.connect(self.process_samples)
 
         self.refresh_ports()
         if initial_port:
-            index = self.port_combo.findText(initial_port)
-            if index >= 0:
-                self.port_combo.setCurrentIndex(index)
-            else:
-                self.port_combo.insertItem(0, initial_port)
+            if not self._select_device(initial_port):
+                self.port_combo.insertItem(0, initial_port, userData=initial_port)
                 self.port_combo.setCurrentIndex(0)
-
-        self.figure.suptitle(title)
-
-        if initial_port:
             QtCore.QTimer.singleShot(0, self.toggle_start_stop)
+
+    # ------------------------------------------------------------------ UI --
 
     def _create_left_panel(self) -> QtWidgets.QWidget:
         left_panel = QtWidgets.QWidget()
@@ -246,7 +307,6 @@ class PlotWindow(QtWidgets.QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(10)
 
-        # Connection group
         connection_group = QtWidgets.QGroupBox("Connection")
         connection_layout = QtWidgets.QGridLayout(connection_group)
         self.port_combo = QtWidgets.QComboBox()
@@ -262,7 +322,6 @@ class PlotWindow(QtWidgets.QMainWindow):
         connection_layout.addWidget(self.baud_spin, 1, 1)
         connection_layout.addWidget(self.connect_button, 1, 2)
 
-        # Controls group
         control_group = QtWidgets.QGroupBox("Controls")
         control_layout = QtWidgets.QGridLayout(control_group)
         self.start_stop_button = QtWidgets.QPushButton("Start")
@@ -274,14 +333,15 @@ class PlotWindow(QtWidgets.QMainWindow):
         self.window_spin.setSingleStep(1.0)
         self.window_spin.setDecimals(1)
         self.window_spin.setValue(self.window_s)
+        self.pause_plot_check = QtWidgets.QCheckBox("Freeze plots (keep logging)")
         control_layout.addWidget(QtWidgets.QLabel("Time window (s)"), 0, 0)
         control_layout.addWidget(self.window_spin, 0, 1)
         control_layout.addWidget(self.start_stop_button, 1, 0)
         control_layout.addWidget(self.exit_button, 1, 1)
         control_layout.addWidget(self.clear_button, 2, 0, 1, 2)
         control_layout.addWidget(self.save_log_button, 3, 0, 1, 2)
+        control_layout.addWidget(self.pause_plot_check, 4, 0, 1, 2)
 
-        # Command group
         command_group = QtWidgets.QGroupBox("Serial Commands")
         command_layout = QtWidgets.QVBoxLayout(command_group)
         self.command_edit = QtWidgets.QLineEdit()
@@ -290,26 +350,26 @@ class PlotWindow(QtWidgets.QMainWindow):
         quick_row = QtWidgets.QHBoxLayout()
         for label in ("A (init)", "I (stop)", "M (measure)", "C (reset)"):
             button = QtWidgets.QPushButton(label)
-            button.clicked.connect(lambda checked=False, cmd=label: self.send_command(cmd))
+            button.clicked.connect(lambda checked=False, cmd=label.split()[0]: self.send_command(cmd))
             quick_row.addWidget(button)
         command_layout.addWidget(self.command_edit)
         command_layout.addWidget(self.send_button)
         command_layout.addLayout(quick_row)
 
-        # Status group
         plot_info_group = QtWidgets.QGroupBox("Status")
         plot_info_layout = QtWidgets.QVBoxLayout(plot_info_group)
         self.status_label = QtWidgets.QLabel("Disconnected")
         self.status_label.setWordWrap(True)
         plot_info_layout.addWidget(self.status_label)
 
-        # Logs group
         logs_group = QtWidgets.QGroupBox("Serial Logs")
         logs_layout = QtWidgets.QVBoxLayout(logs_group)
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(LOG_MAX_BLOCKS)
-        self.log_view.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
+        # Retour à la ligne automatique pour que les longues lignes restent visibles
+        self.log_view.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.log_view.setWordWrapMode(QtGui.QTextOption.WrapMode.WrapAnywhere)
         logs_layout.addWidget(self.log_view)
 
         left_layout.addWidget(connection_group)
@@ -318,54 +378,41 @@ class PlotWindow(QtWidgets.QMainWindow):
         left_layout.addWidget(plot_info_group)
         left_layout.addWidget(logs_group)
         left_layout.addStretch(1)
-        
+
         return left_panel
 
-    def _create_plot_widget(self) -> QtWidgets.QWidget:
-        plot_widget = QtWidgets.QWidget()
-        plot_layout = QtWidgets.QVBoxLayout(plot_widget)
-        plot_layout.setContentsMargins(0, 0, 0, 0)
+    def _create_plot_widget(self, title: str) -> QtWidgets.QWidget:
+        pg.setConfigOptions(antialias=False, background="w", foreground="k")
 
-        self.figure = Figure(figsize=(11, 8), constrained_layout=True)
-        self.canvas = FigureCanvas(self.figure)
-        self.toolbar = NavigationToolbar(self.canvas, self)
-        plot_layout.addWidget(self.toolbar)
-        plot_layout.addWidget(self.canvas)
+        self.glw = pg.GraphicsLayoutWidget()
+        self.glw.addLabel(title, row=0, col=0)
 
-        self.axes = self.figure.subplots(5, 1, sharex=True)
-        self.line_tgt = self.axes[0].plot([], [], label="target", color="#f97316")[0]
-        self.line_iq = self.axes[1].plot([], [], label="Iq", color="#22c55e")[0]
-        self.line_vel = self.axes[2].plot([], [], label="velocity", color="#3b82f6")[0]
-        self.line_pos = self.axes[3].plot([], [], label="position", color="#a855f7")[0]
-        self.line_vbus = self.axes[4].plot([], [], label="Vbus", color="#ef4444")[0]
+        self.plots: List[pg.PlotItem] = []
+        self.curves: List[pg.PlotDataItem] = []
+        for row, (label, color, _channel) in enumerate(PLOT_DEFS, start=1):
+            plot = self.glw.addPlot(row=row, col=0)
+            plot.showGrid(x=True, y=True, alpha=0.25)
+            plot.setLabel("left", label)
+            plot.setMenuEnabled(False)
+            plot.hideButtons()
+            # Downsampling par pics : nombre de points tracés borné par la
+            # largeur en pixels, quel que soit le débit de télémétrie.
+            plot.setDownsampling(mode="peak", auto=True)
+            plot.setClipToView(True)
+            # Auto-range vertical natif (throttlé par pyqtgraph), X piloté à la main
+            plot.enableAutoRange(axis="y")
+            plot.setMouseEnabled(x=False, y=False)
+            curve = plot.plot(pen=pg.mkPen(color, width=1.5))
+            if row > 1:
+                plot.setXLink(self.plots[0])
+            if row < len(PLOT_DEFS):
+                plot.getAxis("bottom").setStyle(showValues=False)
+            self.plots.append(plot)
+            self.curves.append(curve)
 
-        # Set labels
-        self.axes[0].set_ylabel("Target")
-        self.axes[1].set_ylabel("Iq [A]")
-        self.axes[2].set_ylabel("Vel [rad/s]")
-        self.axes[3].set_ylabel("Pos [rad]")
-        self.axes[4].set_ylabel("Vbus [V]")
-        self.axes[4].set_xlabel("Time [s]")
-        
-        # Configure axes with grid and legends
-        for ax in self.axes:
-            ax.grid(True, alpha=0.25)
-            ax.legend(loc="upper right")
-            # Set initial x limits
-            ax.set_xlim(0, self.window_s)
-            # Set initial y limits with reasonable defaults
-            if ax == self.axes[0]:
-                ax.set_ylim(-0.1, 1.1)  # Target 0-1
-            elif ax == self.axes[1]:
-                ax.set_ylim(-1.0, 1.0)  # Iq
-            elif ax == self.axes[2]:
-                ax.set_ylim(-2.0, 2.0)  # Velocity
-            elif ax == self.axes[3]:
-                ax.set_ylim(-1.0, 1.0)  # Position
-            elif ax == self.axes[4]:
-                ax.set_ylim(0, 30.0)  # Vbus
-
-        return plot_widget
+        self.plots[-1].setLabel("bottom", "Time [s]")
+        self.plots[0].setXRange(0, self.window_s, padding=0)
+        return self.glw
 
     def _connect_signals(self) -> None:
         self.refresh_button.clicked.connect(self.refresh_ports)
@@ -378,45 +425,70 @@ class PlotWindow(QtWidgets.QMainWindow):
         self.command_edit.returnPressed.connect(self.send_from_edit)
         self.window_spin.valueChanged.connect(self.on_window_changed)
 
+    # ------------------------------------------------------------- helpers --
+
     def refresh_ports(self) -> None:
-        selected = self.port_combo.currentText()
+        previous_device = self.selected_port()
         self.port_combo.clear()
         ports = list_serial_ports()
-        if ports:
-            self.port_combo.addItems(ports)
-            index = self.port_combo.findText(selected)
-            if index >= 0:
-                self.port_combo.setCurrentIndex(index)
-        else:
+        if not ports:
             self.port_combo.addItem("No serial ports found")
-        self.update_status("Ports refreshed")
+            self.update_status("Ports refreshed — no serial ports found")
+            return
+
+        for info in ports:
+            label = f"{info.device} — {info.description}" if info.description else info.device
+            # Le device réel est stocké en itemData : le texte affiché peut
+            # rester descriptif sans casser l'ouverture du port.
+            self.port_combo.addItem(label, userData=info.device)
+
+        # Auto-sélection : d'abord une cible connue (ESP32/STM32 ou pont
+        # USB-série associé), sinon on garde le port précédemment choisi.
+        best = max(ports, key=lambda p: p.score)
+        if best.score > 0:
+            self._select_device(best.device)
+            self.update_status(f"Ports refreshed — auto-selected {best.device} ({best.description})")
+        elif previous_device and self._select_device(previous_device):
+            self.update_status("Ports refreshed")
+        else:
+            self.update_status("Ports refreshed — no ESP32/STM32 detected")
+
+    def _select_device(self, device: str) -> bool:
+        index = self.port_combo.findData(device)
+        if index < 0:
+            return False
+        self.port_combo.setCurrentIndex(index)
+        return True
 
     def selected_port(self) -> Optional[str]:
-        port = self.port_combo.currentText().strip()
-        if not port or port == "No serial ports found":
+        device = self.port_combo.currentData()
+        if isinstance(device, str) and device.strip():
+            return device.strip()
+        # Repli : entrée insérée manuellement (par ex. via --port) sans userData
+        text = self.port_combo.currentText().strip()
+        if not text or text == "No serial ports found":
             return None
-        return port
+        return text.split(" — ", 1)[0]
 
     def update_status(self, text: str) -> None:
         self.status_label.setText(text)
 
     def append_log(self, line: str) -> None:
-        # Batch log updates for performance
-        if not line[0] in ("t"):
+        # On n'affiche pas les lignes de télémétrie (commençant par "t=") dans
+        # le moniteur, uniquement les messages texte du firmware.
+        if not line.startswith("t="):
             self.pending_logs.append(line)
 
     def _flush_logs(self) -> None:
-        """Flush pending logs to the view."""
         if not self.pending_logs:
             return
-        # Add all pending logs at once
-        text = "\n".join(self.pending_logs)
-        self.log_view.appendPlainText(text)
+        # Un seul appendPlainText pour tout le batch : Qt ne re-layout qu'une fois
+        if len(self.pending_logs) > LOG_MAX_BLOCKS:
+            del self.pending_logs[: len(self.pending_logs) - LOG_MAX_BLOCKS]
+        self.log_view.appendPlainText("\n".join(self.pending_logs))
         self.pending_logs.clear()
-        # Scroll to bottom
-        cursor = self.log_view.textCursor()
-        cursor.movePosition(QtGui.QTextCursor.MoveOperation.End)
-        self.log_view.setTextCursor(cursor)
+        scrollbar = self.log_view.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
 
     def save_logs_csv(self) -> None:
         path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
@@ -427,7 +499,6 @@ class PlotWindow(QtWidgets.QMainWindow):
         )
         if not path:
             return
-
         if not path.lower().endswith(".csv"):
             path += ".csv"
 
@@ -443,36 +514,15 @@ class PlotWindow(QtWidgets.QMainWindow):
         self.update_status(f"Saved {len(self.log_messages)} log lines to {path}")
 
     def clear_graphs_and_monitor(self) -> None:
-        # Reset data buffers
-        self.data_count = 0
-        self.x_data.fill(0)
-        self.tgt_data.fill(0)
-        self.iq_data.fill(0)
-        self.vel_data.fill(0)
-        self.pos_data.fill(0)
-        self.vbus_data.fill(0)
-        self.mode_data.fill(0)
+        self.buffer.clear()
         self.t0 = None
         self.log_messages.clear()
         self.log_view.clear()
         self.pending_logs.clear()
-
-        for line in (self.line_tgt, self.line_iq, self.line_vel, self.line_pos, self.line_vbus):
-            line.set_data([], [])
-
-        # Reset auto-scaling ranges
-        self.tgt_min = 0.0
-        self.tgt_max = 1.0
-        self.iq_min = -1.0
-        self.iq_max = 1.0
-        self.vel_min = -1.0
-        self.vel_max = 1.0
-        self.pos_min = -1.0
-        self.pos_max = 1.0
-        self.vbus_min = 0.0
-        self.vbus_max = 30.0
-        
-        self.canvas.draw_idle()
+        empty = np.empty(0)
+        for curve in self.curves:
+            curve.setData(empty, empty)
+        self.plots[0].setXRange(0, self.window_s, padding=0)
         self.update_status("Cleared graphs and serial monitor")
 
     def set_connection_controls(self, connected: bool) -> None:
@@ -484,16 +534,17 @@ class PlotWindow(QtWidgets.QMainWindow):
     def set_running_controls(self, running: bool) -> None:
         self.start_stop_button.setText("Stop" if running else "Start")
 
+    # ------------------------------------------------------ stream control --
+
     def start_stream(self) -> None:
         if self.reader is None:
             port = self.selected_port()
             if port is None:
                 self.update_status("No serial port selected")
                 return
-
             self.samples = queue.Queue()
             self.t0 = None
-            self.data_count = 0
+            self.buffer.clear()
             self.reader = SerialReader(port, self.baud_spin.value(), self.samples)
             self.reader.start()
             self.current_port = port
@@ -520,20 +571,6 @@ class PlotWindow(QtWidgets.QMainWindow):
         if self.reader is not None:
             self.disconnect_serial()
             return
-
-        port = self.selected_port()
-        if port is None:
-            self.update_status("No serial port selected")
-            return
-
-        self.samples = queue.Queue()
-        self.t0 = None
-        self.data_count = 0
-        self.reader = SerialReader(port, self.baud_spin.value(), self.samples)
-        self.reader.start()
-        self.current_port = port
-        self.set_connection_controls(True)
-        self.update_status(f"Connected to {port} @ {self.baud_spin.value()} baud")
         self.start_stream()
 
     def disconnect_serial(self) -> None:
@@ -563,53 +600,18 @@ class PlotWindow(QtWidgets.QMainWindow):
 
     def send_from_edit(self) -> None:
         self.send_command(self.command_edit.text())
+        self.command_edit.clear()
 
     def on_window_changed(self, value: float) -> None:
         self.window_s = float(value)
-        # Update xlim without relim()
-        for ax in self.axes:
-            ax.set_xlim(0, self.window_s)
 
-    def _update_auto_scale(self, data: np.ndarray, min_val: float, max_val: float, padding: float = 0.1) -> tuple:
-        """Update min/max with auto-scaling logic."""
-        if len(data) == 0:
-            return min_val, max_val
-        
-        data_min = np.nanmin(data)
-        data_max = np.nanmax(data)
-        
-        # Only update if we have valid data
-        if np.isnan(data_min) or np.isnan(data_max):
-            return min_val, max_val
-        
-        # Add padding
-        range_val = data_max - data_min
-        if range_val < 1e-10:
-            # Handle constant data
-            if abs(data_max) < 1e-10:
-                return -0.1, 0.1
-            return data_max * 0.9, data_max * 1.1
-        
-        new_min = data_min - padding * range_val
-        new_max = data_max + padding * range_val
-        
-        # Smooth transitions (don't change too abruptly)
-        if abs(new_min - min_val) > 0.5 * abs(range_val):
-            min_val = (min_val + new_min) / 2
-        else:
-            min_val = new_min
-            
-        if abs(new_max - max_val) > 0.5 * abs(range_val):
-            max_val = (max_val + new_max) / 2
-        else:
-            max_val = new_max
-            
-        return min_val, max_val
+    # ---------------------------------------------------------- main loop --
 
     def process_samples(self) -> None:
-        """Process samples with NumPy buffering and optimized updates."""
+        """Draine la queue série, met à jour le ring buffer puis les courbes."""
         new_data = False
-        
+        scratch = self._sample_scratch
+
         while True:
             try:
                 item = self.samples.get_nowait()
@@ -625,87 +627,58 @@ class PlotWindow(QtWidgets.QMainWindow):
             self.log_messages.append(item)
             self.append_log(item.raw_line)
 
-            if item.fields is None:
+            fields = item.fields
+            if fields is None:
                 continue
-
-            # Parse fields
-            t_ms = item.fields.get("t")
+            t_ms = fields.get("t")
             if t_ms is None:
                 continue
 
             if self.t0 is None:
                 self.t0 = t_ms / 1000.0
 
-            elapsed = (t_ms / 1000.0) - (self.t0 or 0.0)
-            
-            # Store in NumPy arrays (circular buffer)
-            idx = self.data_count % self.data_size
-            self.x_data[idx] = elapsed
-            self.tgt_data[idx] = item.fields.get("tgt", 0.0)
-            self.iq_data[idx] = item.fields.get("Iq", item.fields.get("iq", 0.0))
-            self.vel_data[idx] = item.fields.get("vel", 0.0)
-            self.pos_data[idx] = item.fields.get("pos", 0.0)
-            self.vbus_data[idx] = item.fields.get("Vbus", item.fields.get("vbus", 0.0))
-            self.mode_data[idx] = item.fields.get("mode", float("nan"))
-            
-            self.data_count += 1
+            scratch[CH_T] = (t_ms / 1000.0) - self.t0
+            scratch[CH_TGT] = fields.get("tgt", 0.0)
+            scratch[CH_IQ] = fields.get("Iq", fields.get("iq", 0.0))
+            scratch[CH_VEL] = fields.get("vel", 0.0)
+            scratch[CH_POS] = fields.get("pos", 0.0)
+            scratch[CH_VBUS] = fields.get("Vbus", fields.get("vbus", 0.0))
+            scratch[CH_MODE] = fields.get("mode", float("nan"))
+            self.buffer.append(scratch)
             new_data = True
 
-        if not new_data or self.data_count == 0:
+        if not new_data or self.buffer.count == 0:
+            return
+        if self.pause_plot_check.isChecked():
             return
 
-        # Update plot with NumPy data
-        count = min(self.data_count, self.data_size)
-        cutoff = self.x_data[count - 1] - self.window_s
-        
-        # Create view of data within window using NumPy
-        indices = self.x_data[:count] >= cutoff
-        x = self.x_data[:count][indices] - cutoff
-        
-        # Get data for each signal
-        tgt = self.tgt_data[:count][indices]
-        iq = self.iq_data[:count][indices]
-        vel = self.vel_data[:count][indices]
-        pos = self.pos_data[:count][indices]
-        vbus = self.vbus_data[:count][indices]
-        
-        # Update line data
-        self.line_tgt.set_data(x, tgt)
-        self.line_iq.set_data(x, iq)
-        self.line_vel.set_data(x, vel)
-        self.line_pos.set_data(x, pos)
-        self.line_vbus.set_data(x, vbus)
-        
-        # Auto-scale y-axes if we have data
-        if len(x) > 0:
-            # Update auto-scaling for each axis
-            self.tgt_min, self.tgt_max = self._update_auto_scale(tgt, self.tgt_min, self.tgt_max)
-            self.iq_min, self.iq_max = self._update_auto_scale(iq, self.iq_min, self.iq_max)
-            self.vel_min, self.vel_max = self._update_auto_scale(vel, self.vel_min, self.vel_max)
-            self.pos_min, self.pos_max = self._update_auto_scale(pos, self.pos_min, self.pos_max)
-            self.vbus_min, self.vbus_max = self._update_auto_scale(vbus, self.vbus_min, self.vbus_max)
-            
-            # Apply y-limits (only if they've changed significantly)
-            self.axes[0].set_ylim(self.tgt_min, self.tgt_max)
-            self.axes[1].set_ylim(self.iq_min, self.iq_max)
-            self.axes[2].set_ylim(self.vel_min, self.vel_max)
-            self.axes[3].set_ylim(self.pos_min, self.pos_max)
-            self.axes[4].set_ylim(self.vbus_min, self.vbus_max)
+        view = self.buffer.ordered_view()  # vue contiguë, sans copie
+        x = view[CH_T]
+        t_last = x[-1]
+        t_start = t_last - self.window_s
 
-        # Update status
-        last_mode = self.mode_data[count - 1]
-        if self.current_port:
+        # Recherche binaire du début de fenêtre : O(log n), pas de masque booléen
+        i0 = int(np.searchsorted(x, t_start, side="left"))
+        x_win = x[i0:]
+
+        for curve, (_label, _color, channel) in zip(self.curves, PLOT_DEFS):
+            curve.setData(x_win, view[channel, i0:])
+
+        # Axe X qui défile ; les axes Y sont gérés par l'auto-range pyqtgraph
+        self.plots[0].setXRange(max(0.0, t_start), max(self.window_s, t_last), padding=0)
+
+        now = time.monotonic()
+        if now - self._last_status > STATUS_UPDATE_MS / 1000.0 and self.current_port:
+            self._last_status = now
+            last_mode = view[CH_MODE, -1]
             self.update_status(
-                f"Port {self.current_port} | samples={count} | last t={self.x_data[count-1]:.2f}s | mode={last_mode:g}"
+                f"Port {self.current_port} | samples={self.buffer.count} "
+                f"| last t={t_last:.2f}s | mode={last_mode:g}"
             )
-        
-        # Redraw
-        self.canvas.draw_idle()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API name
         self.timer.stop()
-        if self.log_timer:
-            self.log_timer.stop()
+        self.log_timer.stop()
         self.disconnect_serial()
         super().closeEvent(event)
 

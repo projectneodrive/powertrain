@@ -121,6 +121,14 @@ public:
   // send the cyclic telemetry frames that are due at time `now_ms`.
   void txCyclic(uint32_t now_ms);
 
+  // TX/RX health counters for diagnostics (see main.cpp SerialTask). tx_fail
+  // climbing means STM32_CAN::write() is rejecting frames at the hardware
+  // level (e.g. BUS_OFF) -- this is otherwise silent, since send() ignores
+  // write()'s return value on its own.
+  uint32_t txOkCount()   const { return _tx_ok; }
+  uint32_t txFailCount() const { return _tx_fail; }
+  uint32_t rxCount()     const { return _rx_count; }
+
 private:
   void dispatch(uint8_t cmd, const CAN_message_t& m);
   void send(uint8_t cmd, const uint8_t* d, uint8_t len);
@@ -133,6 +141,7 @@ private:
   STM32_CAN  _can{CAN1, ALT, RX_SIZE_64, TX_SIZE_16};   // CAN1 on PB8/PB9
   uint8_t    _node = 0;
   uint32_t   _t_hb = 0, _t_enc = 0, _t_iq = 0, _t_vi = 0;
+  volatile uint32_t _tx_ok = 0, _tx_fail = 0, _rx_count = 0;
 };
 
 } // namespace odcan

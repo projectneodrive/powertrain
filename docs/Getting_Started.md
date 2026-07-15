@@ -140,7 +140,7 @@ A successful upload ends with something like `Programming Complete!` /
    --- SimpleFOC + FreeRTOS + CANSimple ---
    DRV8301 status1=0x0 gain_set=OK
    Current sense OK -> foc_current torque control
-   CAN up: node 0 @ 100000 bps
+   CAN up: node 0 @ 500000 bps
    SAFE state (disarmed). Send 'A' via serial or CAN CLOSED_LOOP state to arm.
    Serial cmds: A arm | I idle | V<rad/s> | T<Nm> | M charac R/L | C clear | KP/KI/KD<v> vel PID | K show
    t=... #0 mode=1 tgt=0.00 Iq=0.00 vel=0.00 pos=0.00 Vbus=... SAFE
@@ -344,7 +344,7 @@ so odrivetool and existing ODrive CAN tools work unchanged.
 | Upload fails / "no ST‑Link" | ST‑Link driver (Windows: STSW‑LINK009); check SWDIO/SWCLK/GND; try connecting `NRST`; power the board. |
 | First build errors on a library | Needs internet on first build; re‑run. Paste the exact error if it persists. |
 | Motor doesn't move | Is it armed? (`Set_Axis_State(8)` or serial). Is `Vbus` present? Check `nFAULT` — a `[FAULT]` on serial means the DRV8301 tripped (over‑current); reduce load and send `C`. |
-| `candump` shows nothing | Bit rate mismatch (must be 100 kbit/s), missing 120 Ω terminators, swapped CANH/CANL, or the clone's CAN transceiver isn't populated (PB8/PB9). |
+| `candump` shows nothing | Bit rate mismatch (must be 500 kbit/s), missing 120 Ω terminators, swapped CANH/CANL, or the clone's CAN transceiver isn't populated (PB8/PB9). |
 | MCP2515 won't init | Wrong crystal setting — try `MCP_16MHZ` vs `MCP_8MHZ` in the sketch. |
 | ESP32 TWAI won't send or receive | Check that the transceiver is 3.3 V compatible, TXD/RXD are wired to the correct GPIOs, and CANH/CANL are not swapped. |
 | `Vbus` reads wrong | Calibrate `CFG_VBUS_DIV` in `board_config.h` to your board's divider. |

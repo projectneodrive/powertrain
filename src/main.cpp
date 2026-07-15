@@ -412,6 +412,29 @@ static void handleSerial() {
   }
 }
 
+// ============================================================================
+//  FreeRTOS fault hooks (configCHECK_FOR_STACK_OVERFLOW / configUSE_MALLOC_FAILED_HOOK
+//  in include/STM32FreeRTOSConfig.h). Both conditions previously produced a
+//  silent hang with no serial output at all -- these make the failure
+//  self-report instead, and cut the gate driver since RTOS state can no
+//  longer be trusted to keep running FOCTask/SafetyTask correctly.
+// ============================================================================
+extern "C" void vApplicationStackOverflowHandler(TaskHandle_t /*xTask*/, char *pcTaskName) {
+  digitalWrite(PIN_EN_GATE, LOW);
+  Serial.print("\n[FATAL] Stack overflow in task \"");
+  Serial.print(pcTaskName);
+  Serial.println("\" -- halting. Increase its STACK_* in board_config.h.");
+  Serial.flush();
+  for (;;) {}
+}
+
+extern "C" void vApplicationMallocFailedHook(void) {
+  digitalWrite(PIN_EN_GATE, LOW);
+  Serial.println("\n[FATAL] FreeRTOS heap allocation failed (configTOTAL_HEAP_SIZE exhausted) -- halting.");
+  Serial.flush();
+  for (;;) {}
+}
+
 static void SerialTask(void *) {
   uint32_t beat = 0;
   TickType_t last = xTaskGetTickCount();
@@ -426,7 +449,10 @@ static void SerialTask(void *) {
     Serial.print(" pos=");       Serial.print(g_io.pos_rev * TWO_PI, 2);
     Serial.print(" Vbus=");      Serial.print(g_io.vbus, 1);
     Serial.print(g_focReady ? " RUN" : (g_calibrated ? " idle" : " SAFE"));
-    Serial.println(g_fault ? " [FAULT]" : "");
+    Serial.print(g_fault ? " [FAULT]" : "");
+    Serial.print(" can_tx_ok=");   Serial.print(g_can.txOkCount());
+    Serial.print(" can_tx_fail="); Serial.print(g_can.txFailCount());
+    Serial.print(" can_rx=");      Serial.println(g_can.rxCount());
     vTaskDelayUntil(&last, pdMS_TO_TICKS(100));
   }
 }

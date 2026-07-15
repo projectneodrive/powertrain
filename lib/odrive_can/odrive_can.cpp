@@ -15,9 +15,28 @@ static inline void     wr_f32(uint8_t* p, float f)    { memcpy(p, &f, 4); }
 // ---------------------------------------------------------------------------
 void OdriveCAN::begin(uint8_t node_id, uint32_t baud, uint8_t irq_prio) {
   _node = node_id;
-  _can.begin();
-  _can.setBaudRate(baud);
+  // setIRQPriority()/setAutoBusOffRecovery() are both documented as "setup
+  // functions -- no effect after begin()", so they MUST run before begin().
+  // Getting this order wrong is silent: begin() just bakes in whatever the
+  // member defaults were. preemptPriority/subPriority are never initialized
+  // by the library's constructor, so calling setIRQPriority() after begin()
+  // (as this used to) left the CAN1 ISR at NVIC priority 0 -- ABOVE
+  // configMAX_SYSCALL_INTERRUPT_PRIORITY (see NVIC_PRIO_RTOS_SAFE comment in
+  // board_config.h), meaning it could preempt a FreeRTOS critical section
+  // mid-update inside the driver's own TX/RX ring buffers and corrupt them.
+  // That fully explains "a few frames work, then everything wedges forever,
+  // non-deterministically depending on boot timing".
+  //
+  // STM32_CAN::begin() also defaults its `retransmission` arg to false
+  // (auto retransmit OFF) despite what its header comment claims, and its
+  // constructor separately sets AutoBusOffRecovery=false: a handful of
+  // unacked frames early at boot (e.g. before the CAN peer's own driver is
+  // up) can push the controller into BUS_OFF, which then never recovers on
+  // its own. Both are set explicitly below too.
   _can.setIRQPriority(irq_prio, 0);
+  _can.setAutoBusOffRecovery(true);
+  _can.begin(true);
+  _can.setBaudRate(baud);
   // Accept only frames addressed to our node: match the top 6 id bits
   // (node<<5), leave the low 5 (cmd) as don't-care.
   _can.setFilterSingleMask(0, (uint32_t)_node << 5, 0x7E0, STD);
@@ -29,6 +48,7 @@ void OdriveCAN::begin(uint8_t node_id, uint32_t baud, uint8_t irq_prio) {
 void OdriveCAN::poll() {
   CAN_message_t m;
   while (_can.read(m)) {
+    _rx_count++;
     if (m.flags.extended) continue;               // CANSimple uses standard ids
     uint8_t node = (m.id >> 5) & 0x3F;
     uint8_t cmd  = m.id & 0x1F;
@@ -144,7 +164,11 @@ void OdriveCAN::send(uint8_t cmd, const uint8_t* d, uint8_t len) {
   m.flags.remote   = false;
   m.len = len;
   for (uint8_t i = 0; i < len && i < 8; i++) m.buf[i] = d[i];
-  _can.write(m);
+  if (_can.write(m)) {
+    _tx_ok++;
+  } else {
+    _tx_fail++;
+  }
 }
 
 void OdriveCAN::sendHeartbeat() {

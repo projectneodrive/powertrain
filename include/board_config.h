@@ -102,7 +102,7 @@
 #define CFG_VBUS_NOMINAL   24.0f    // driver.voltage_power_supply
 #define CFG_PWM_FREQ_HZ    20000    // 20 kHz (matches FOC tick; keeps sense window sane)
 #define CFG_VOLT_LIMIT     20.0f     // motor/driver voltage limit (safety)
-#define CFG_VOLT_ALIGN     5.0f     // voltage used during initFOC alignment
+#define CFG_VOLT_ALIGN     3.0f     // voltage used during initFOC alignment
 #define CFG_CURRENT_LIMIT  10.0f    // A (used once current sensing is enabled)
 #define CFG_VEL_LIMIT      100.0f   // rad/s
 
@@ -122,8 +122,8 @@
 
 // FOC current-loop PID + measurement filter (foc_current torque mode).
 // Starting points — expect to bench-tune per motor.
-#define CFG_CUR_P          0.04f     // current PID P (V/A)
-#define CFG_CUR_I          1.0f   // current PID I
+#define CFG_CUR_P          1.0f     // current PID P (V/A)
+#define CFG_CUR_I          50.0f   // current PID I
 #define CFG_LPF_CUR_TF     0.01f   // current measurement low-pass (s)
 #define CFG_CHAR_VOLTAGE   1.0f     // voltage used by characteriseMotor() for R/L
 
@@ -170,7 +170,7 @@
 //  CAN (ODrive CANSimple) — Phase 6
 // ============================================================================
 #define CFG_CAN_NODE_ID   0
-#define CFG_CAN_BAUD      100000     // matches CAN/create_can_dbc.py (100 kbit/s)
+#define CFG_CAN_BAUD      500000     // must match CAN_BAUD in can_utilities/src/main.cpp (500 kbit/s)
 #define CFG_WATCHDOG_MS   0          // CAN setpoint timeout; 0 = disabled.
                                      // Set e.g. 250 for an e-bike so that losing
                                      // the CAN master disarms the motor.
@@ -181,10 +181,10 @@
 // ============================================================================
 // En foc_current la sortie du PID vitesse est un courant (A), plus une tension.
 // Points de départ à re-tuner sur banc.
-#define CFG_VEL_P        0.003f        // A/(rad/s)
-#define CFG_VEL_I        0.5f        // A/(rad·s⁻¹·s)
-#define CFG_VEL_D        0.0f
-#define CFG_VEL_RAMP     100.0f      // PID output ramp (A/s)
-#define CFG_POS_P        10.0f       // position P gain ((rad/s)/rad)
-#define CFG_LPF_VEL_TF   0.03f       // velocity low-pass (s) — vitesse hall quantifiée,
+#define CFG_VEL_P        0.05f        // A/(rad/s)
+#define CFG_VEL_I        0.1f        // A/(rad·s⁻¹·s)
+#define CFG_VEL_D        0.001f
+#define CFG_VEL_RAMP     30.0f      // PID output ramp (A/s)
+#define CFG_POS_P        1.0f       // position P gain ((rad/s)/rad)
+#define CFG_LPF_VEL_TF   0.05f       // velocity low-pass (s) — vitesse hall quantifiée,
                                      // filtrer plus fort que pour un encodeur
