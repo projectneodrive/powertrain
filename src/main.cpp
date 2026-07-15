@@ -522,7 +522,7 @@ void setup() {
   motor.voltage_limit        = CFG_VOLT_LIMIT;
   motor.current_limit        = CFG_CURRENT_LIMIT;
   motor.velocity_limit       = CFG_VEL_LIMIT;
-  motor.controller           = MotionControlType::velocity_openloop;
+  motor.controller           = MotionControlType::velocity;
   motor.foc_modulation       = FOCModulationType::SpaceVectorPWM;
   motor.voltage_sensor_align = CFG_VOLT_ALIGN;
   motor.motion_downsample    = MOTION_DOWNSAMPLE;

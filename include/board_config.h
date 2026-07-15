@@ -101,9 +101,9 @@
 // ---------------------------------------------------------------------------
 #define CFG_VBUS_NOMINAL   24.0f    // driver.voltage_power_supply
 #define CFG_PWM_FREQ_HZ    20000    // 20 kHz (matches FOC tick; keeps sense window sane)
-#define CFG_VOLT_LIMIT     20.0f     // motor/driver voltage limit (safety)
+#define CFG_VOLT_LIMIT     23.0f     // motor/driver voltage limit (safety)
 #define CFG_VOLT_ALIGN     3.0f     // voltage used during initFOC alignment
-#define CFG_CURRENT_LIMIT  10.0f    // A (used once current sensing is enabled)
+#define CFG_CURRENT_LIMIT  5.0f    // A (used once current sensing is enabled)
 #define CFG_VEL_LIMIT      100.0f   // rad/s
 
 // Consigne de vitesse max acceptée (rad/s) : ~90 % de la vitesse à vide
@@ -117,7 +117,7 @@
 //  Shunt value and DRV8301 amp gain directly scale measured phase current.
 //  The DRV_GAIN here MUST equal the gain programmed into DRV8301 CTRL2.
 // ---------------------------------------------------------------------------
-#define CFG_SHUNT_OHMS     0.0005f  // 0.5 mOhm (ODrive 56V); clones vary (verify!)
+#define CFG_SHUNT_OHMS     0.005f  //5 mOhm (ODrive 56V); clones vary (verify!)
 #define CFG_DRV_GAIN       40.0f    // V/V  (DRV8301: 10/20/40/80 selectable)
 
 // FOC current-loop PID + measurement filter (foc_current torque mode).
@@ -181,9 +181,9 @@
 // ============================================================================
 // En foc_current la sortie du PID vitesse est un courant (A), plus une tension.
 // Points de départ à re-tuner sur banc.
-#define CFG_VEL_P        0.05f        // A/(rad/s)
-#define CFG_VEL_I        0.1f        // A/(rad·s⁻¹·s)
-#define CFG_VEL_D        0.001f
+#define CFG_VEL_P        0.5f        // A/(rad/s)
+#define CFG_VEL_I        0.001f        // A/(rad·s⁻¹·s)
+#define CFG_VEL_D        0.01f
 #define CFG_VEL_RAMP     30.0f      // PID output ramp (A/s)
 #define CFG_POS_P        1.0f       // position P gain ((rad/s)/rad)
 #define CFG_LPF_VEL_TF   0.05f       // velocity low-pass (s) — vitesse hall quantifiée,
