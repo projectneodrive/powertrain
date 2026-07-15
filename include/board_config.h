@@ -1,6 +1,6 @@
 // ============================================================================
 //  board_config.h  —  Single source of truth for the ODrive v3.6 (MKS clone)
-//  SimpleFOC firmware. Pins, motor presets, limits and RTOS timing live here.
+//  SimpleFOC firmware. Pins, motor config, limits and RTOS timing live here.
 //
 //  Target: STM32F405RGT6 @ 168 MHz, DRV8301 gate driver, single channel (M0).
 //  Pin map reconciled against the authoritative ODrive v3.6 hardware:
@@ -46,34 +46,12 @@
 #define PIN_ENC_B      PB5    // TIM3_CH2 / Hall B
 #define PIN_ENC_Z      PC9    // encoder index / Hall C
 
-// ---------------------------------------------------------------------------
-//  CAN1 — used from Phase 6 onward
-// ---------------------------------------------------------------------------
-#define PIN_CAN_RX     PB8    // CAN1_RX
-#define PIN_CAN_TX     PB9    // CAN1_TX
-
 // ============================================================================
-//  Motor / power presets.  Define MOTOR_PRESET in platformio.ini build_flags
-//  to override (e.g. -D MOTOR_PRESET=MOTOR_PRESET_EBIKE).
+//  Motor / power configuration — 26pp hub motor + hall sensors
 // ============================================================================
-#define MOTOR_PRESET_BENCH   1   // 7pp drone motor + 600 PPR quadrature encoder
-#define MOTOR_PRESET_EBIKE   2   // 26pp hub motor + hall sensors
-
-#ifndef MOTOR_PRESET
-#define MOTOR_PRESET MOTOR_PRESET_EBIKE
-#endif
-
-#if MOTOR_PRESET == MOTOR_PRESET_BENCH
-  #define CFG_POLE_PAIRS   7
-  #define CFG_ENC_PPR      600      // quadrature 600 PPR -> 2400 CPR
-  #define CFG_KV           190.0f   // drone motor KV
-#elif MOTOR_PRESET == MOTOR_PRESET_EBIKE
-  #define CFG_POLE_PAIRS   26
-  #define CFG_ENC_PPR      600      // (only used if a quadrature enc is fitted)
-  #define CFG_KV           8.2f    // hub motor KV
-#else
-  #error "Unknown MOTOR_PRESET"
-#endif
+#define CFG_POLE_PAIRS   26
+#define CFG_ENC_PPR      600      // (only used if a quadrature enc is fitted)
+#define CFG_KV           8.2f     // hub motor KV
 
 // Torque constant (Nm/A). Kt = 8.27 / KV (same relation ODrive uses).
 #define CFG_KT           (8.27f / CFG_KV)
@@ -89,11 +67,7 @@
 #define SENSOR_TYPE_HALL        2
 
 #ifndef SENSOR_TYPE
-  #if MOTOR_PRESET == MOTOR_PRESET_EBIKE
-    #define SENSOR_TYPE SENSOR_TYPE_HALL        // hub motor -> hall sensors
-  #else
-    #define SENSOR_TYPE SENSOR_TYPE_QUADRATURE  // bench motor -> quadrature enc
-  #endif
+#define SENSOR_TYPE SENSOR_TYPE_HALL   // hub motor -> hall sensors
 #endif
 
 // ---------------------------------------------------------------------------

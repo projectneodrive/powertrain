@@ -62,7 +62,7 @@ For host-side CAN control, the repo includes both an Arduino MCP2515 sender and
 an ESP32 native TWAI sender. The ESP32 sketch expects an external 3.3 V CAN
 transceiver such as the CJMCU-230.
 
-Two compile‑time switches there: **`MOTOR_PRESET`** (`BENCH` 7pp+encoder /
-`EBIKE` 26pp+hall) and **`SENSOR_TYPE`** (`SENSOR_TYPE_QUADRATURE` /
-`SENSOR_TYPE_HALL`). `SENSOR_TYPE` defaults from the preset but can be overridden
-in `platformio.ini` (`-D SENSOR_TYPE=SENSOR_TYPE_HALL`).
+Motor/sensor parameters (`CFG_POLE_PAIRS`, `CFG_KV`, etc.) are plain `#define`s
+there. One compile‑time switch remains: **`SENSOR_TYPE`** (`SENSOR_TYPE_QUADRATURE` /
+`SENSOR_TYPE_HALL`, defaults to hall), which can be overridden in `platformio.ini`
+(`-D SENSOR_TYPE=SENSOR_TYPE_QUADRATURE`).

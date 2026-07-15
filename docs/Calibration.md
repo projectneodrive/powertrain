@@ -13,7 +13,7 @@ find, how to measure them, and how to **save** them so the board boots ready.
 
 | # | Parameter | How to get it | `board_config.h` field |
 |---|-----------|---------------|------------------------|
-| 1 | Pole pairs | Datasheet, or (magnets ÷ 2) | `CFG_POLE_PAIRS` (via `MOTOR_PRESET`) |
+| 1 | Pole pairs | Datasheet, or (magnets ÷ 2) | `CFG_POLE_PAIRS` |
 | 2 | KV → torque const `Kt` | Datasheet (`Kt = 8.27/KV`) | `CFG_KV` |
 | 3 | Sensor type | Your hardware | `SENSOR_TYPE` |
 | 4 | Encoder PPR (quadrature only) | Encoder datasheet | `CFG_ENC_PPR` |
@@ -37,15 +37,14 @@ the power switch. Calibration energises and moves the motor.
 
 ## Step 1 — set the known parameters (datasheet)
 
-In [`board_config.h`](../include/board_config.h), pick a preset or set the values
-directly, and **leave `CFG_PRECALIBRATED 0`** for now:
+In [`board_config.h`](../include/board_config.h), set the values directly, and
+**leave `CFG_PRECALIBRATED 0`** for now:
 
 ```c
-#define MOTOR_PRESET  MOTOR_PRESET_EBIKE   // or _BENCH, or set the fields by hand:
-// #define CFG_POLE_PAIRS 26
-// #define CFG_KV         8.2f
-#define SENSOR_TYPE   SENSOR_TYPE_HALL     // or SENSOR_TYPE_QUADRATURE
-// #define CFG_ENC_PPR 600                 // quadrature only
+#define CFG_POLE_PAIRS 26
+#define CFG_KV         8.2f
+#define SENSOR_TYPE    SENSOR_TYPE_HALL   // or SENSOR_TYPE_QUADRATURE
+// #define CFG_ENC_PPR 600                // quadrature only
 #define CFG_PRECALIBRATED 0
 ```
 Build + flash + open the serial monitor (115200). You should see
@@ -126,7 +125,8 @@ longer has to rotate freely to arm, so you can arm with the wheel on the ground.
 ## Quick reference — one full example (`board_config.h`)
 
 ```c
-#define MOTOR_PRESET         MOTOR_PRESET_EBIKE   // 26 pp, KV 8.2
+#define CFG_POLE_PAIRS       26
+#define CFG_KV               8.2f
 #define SENSOR_TYPE          SENSOR_TYPE_HALL
 #define CFG_CURRENT_LIMIT    15.0f
 #define CFG_VOLT_LIMIT       24.0f                // raised after bring-up
