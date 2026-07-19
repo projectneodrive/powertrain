@@ -1,0 +1,5 @@
+build/
+*.wasm
+*.o
+CMakeCache.txt
+CMakeFiles/

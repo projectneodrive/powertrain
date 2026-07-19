@@ -7,6 +7,7 @@
 #include <STM32FreeRTOS.h>
 #include "encoders/stm32hwencoder/STM32HWEncoder.h"
 #include "encoders/smoothing/SmoothingSensor.h"
+#include "current_sense/hardware_specific/stm32/stm32_mcu.h"  // Stm32CurrentSenseParams
 #include "drv8301.h"
 #include "odrive_can.h"
 #include "board_config.h"
@@ -79,6 +80,21 @@ static   bool  g_iSenseOk      = false;
 static   TaskHandle_t g_focTask = nullptr;
 static   HardwareTimer *g_focTimer = nullptr;
 
+// --- Télémétrie capteur (écrite par FOCTask SEULEMENT, lue par CommsTask).
+//     getAngle() lit full_rotations + angle_prev : paire non atomique, mise à
+//     jour à 20 kHz par FOCTask. La lire depuis CommsTask donne des lectures
+//     déchirées = spikes de ±1 tour dans pos_rev. Un float volatile écrit par
+//     un seul writer est, lui, atomique sur Cortex-M4. ---
+volatile float g_shaft_angle = 0.0f;   // rad, multi-tours (convention capteur)
+volatile float g_shaft_vel   = 0.0f;   // rad/s
+
+// --- DC bus safety (écrit par SafetyTask, lu par FOCTask/CommsTask) ---
+volatile float g_vbus_filt      = 0.0f;              // Vbus filtré (V)
+volatile float g_regen_iq_limit = CFG_CURRENT_LIMIT; // |Iq| de freinage max (A)
+volatile float g_brake_duty     = 0.0f;              // duty frein appliqué [0..1]
+static   HardwareTimer *g_brakeTimer = nullptr;
+static   uint32_t g_brakeChan = 0;
+
 // 20 kHz FOC tick ISR
 static void onFocTick() {
   BaseType_t hpw = pdFALSE;
@@ -89,23 +105,145 @@ static void onFocTick() {
 // ============================================================================
 //  Logic Helpers
 // ============================================================================
-// Définie dans SimpleFOC (stm32_adc_utils.cpp) mais absente de son header :
-// lit un canal régulier sur l'ADC déjà utilisé par le current sense SANS le
-// désinitialiser. analogRead() est INTERDIT sur PA6 : STM32duino fait
-// HAL_ADC_DeInit sur ADC1 à chaque appel, ce qui tue les conversions
-// injectées des shunts (courants figés -> échec de l'alignement).
-float _readRegularADCVoltage(const int pin);
+// ---------------------------------------------------------------------------
+//  DC bus safety : mesure Vbus + résistance de freinage + dérating régen.
+//  Tout tourne dans SafetyTask (1 kHz), SEULE tâche à toucher l'ADC Vbus —
+//  publishTelemetry lit g_vbus_filt (pas de conversion concurrente).
+// ---------------------------------------------------------------------------
 
-static float readVbus() {
-  static float    v_cache = 0.0f;
-  static uint32_t t_last  = 0;
-  uint32_t now = millis();
-  if (v_cache == 0.0f || (now - t_last) >= 100) {
-    t_last = now;
-    float v = _readRegularADCVoltage(PIN_VBUS);   // volts; -1.0f si erreur
-    if (v >= 0.0f) v_cache = v * CFG_VBUS_DIV;
+// Vbus sur un ADC DÉDIÉ, jamais celui des shunts. Historique des échecs sur
+// banc (bus réel 24 V) :
+//  - analogRead() : STM32duino DeInit l'ADC -> tue les conversions injectées.
+//  - _readRegularADCVoltage() (canal régulier SUR l'ADC des shunts) : le
+//    trigger injecté (TIM1, 20 kHz) avorte/reprend la conversion régulière en
+//    plein échantillonnage, qui repart avec la tension du canal injecté dans
+//    le S/H -> ~5.4 V à l'arrêt (amplis éteints, 0 V), ~30 V moteur armé
+//    (amplis à ~1.65 V). Fausse faute OV systématique pendant l'alignement,
+//    même avec 480 cycles d'échantillonnage, médiane et anti-rebond 10 ms.
+//  PA6 = ADC12_IN6 : on prend celui d'ADC1/ADC2 que le current sense
+//  n'occupe pas -> aucune interaction possible avec les injectées.
+static ADC_HandleTypeDef g_vbusAdc = {};
+
+static bool vbusAdcInit() {
+  ADC_TypeDef *cs_inst = nullptr;
+  if (g_iSenseOk && current_sense.params) {
+    ADC_HandleTypeDef *h = ((Stm32CurrentSenseParams *)current_sense.params)->adc_handle;
+    if (h) cs_inst = h->Instance;
   }
-  return v_cache;
+  ADC_TypeDef *inst = (cs_inst == ADC1) ? ADC2 : ADC1;
+
+  if (inst == ADC1) { __HAL_RCC_ADC1_CLK_ENABLE(); }
+  else              { __HAL_RCC_ADC2_CLK_ENABLE(); }
+  pinmap_pinout(digitalPinToPinName(PIN_VBUS), PinMap_ADC);  // PA6 analogique
+
+  g_vbusAdc.Instance = inst;
+  // Même prescaler que la lib (registre COMMUN aux deux ADC — ne pas dévier).
+  g_vbusAdc.Init.ClockPrescaler        = ADC_CLOCK_SYNC_PCLK_DIV4;
+  g_vbusAdc.Init.Resolution            = ADC_RESOLUTION_12B;
+  g_vbusAdc.Init.ScanConvMode          = DISABLE;
+  g_vbusAdc.Init.ContinuousConvMode    = DISABLE;
+  g_vbusAdc.Init.DiscontinuousConvMode = DISABLE;
+  g_vbusAdc.Init.ExternalTrigConvEdge  = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  g_vbusAdc.Init.ExternalTrigConv      = ADC_SOFTWARE_START;
+  g_vbusAdc.Init.DataAlign             = ADC_DATAALIGN_RIGHT;
+  g_vbusAdc.Init.NbrOfConversion       = 1;
+  g_vbusAdc.Init.DMAContinuousRequests = DISABLE;
+  g_vbusAdc.Init.EOCSelection          = ADC_EOC_SINGLE_CONV;
+  if (HAL_ADC_Init(&g_vbusAdc) != HAL_OK) { g_vbusAdc.Instance = nullptr; return false; }
+
+  ADC_ChannelConfTypeDef c = {};
+  c.Channel      = ADC_CHANNEL_6;             // PA6 = ADC12_IN6
+  c.Rank         = 1;
+  c.SamplingTime = ADC_SAMPLETIME_480CYCLES;  // diviseur haute impédance
+  c.Offset       = 0;
+  if (HAL_ADC_ConfigChannel(&g_vbusAdc, &c) != HAL_OK) { g_vbusAdc.Instance = nullptr; return false; }
+
+  Serial.print("Vbus ADC: dedicated ADC");
+  Serial.print(inst == ADC1 ? 1 : 2);
+  Serial.print(" (current sense on ADC");
+  Serial.print(cs_inst == ADC1 ? "1" : (cs_inst == ADC2 ? "2" : "?"));
+  Serial.println(")");
+  return true;
+}
+
+// Conversion one-shot bloquante (~24 µs) — appelée uniquement par SafetyTask.
+static float readVbusRaw() {
+  if (!g_vbusAdc.Instance) return -1.0f;
+  if (HAL_ADC_Start(&g_vbusAdc) != HAL_OK) return -1.0f;
+  float v = -1.0f;
+  if (HAL_ADC_PollForConversion(&g_vbusAdc, 1) == HAL_OK)
+    v = HAL_ADC_GetValue(&g_vbusAdc) * (3.3f / 4096.0f);
+  HAL_ADC_Stop(&g_vbusAdc);
+  return v;
+}
+
+// Médiane de 3 : rejette tout échantillon isolé aberrant (conversion avortée
+// par un trigger injecté, transitoire de commutation) avant le LPF.
+static float median3(float a, float b, float c) {
+  return fmaxf(fminf(a, b), fminf(fmaxf(a, b), c));
+}
+
+static void setBrakeDuty(float d) {
+  g_brake_duty = d;
+  if (g_brakeTimer)
+    g_brakeTimer->setCaptureCompare(g_brakeChan, (uint32_t)(d * 4095.0f),
+                                    RESOLUTION_12B_COMPARE_FORMAT);
+}
+
+static void brakeInit() {
+  // PWM matériel pur (TIM2_CH3 sur PB10) : zéro CPU, zéro interruption. La
+  // mise à jour du duty depuis SafetyTask est une simple écriture registre.
+  PinName p = digitalPinToPinName(PIN_AUX_L);
+  TIM_TypeDef *inst = (TIM_TypeDef *)pinmap_peripheral(p, PinMap_TIM);
+  g_brakeChan = STM_PIN_CHANNEL(pinmap_function(p, PinMap_TIM));
+  g_brakeTimer = new HardwareTimer(inst);
+  g_brakeTimer->setPWM(g_brakeChan, PIN_AUX_L, CFG_BRAKE_PWM_HZ, 0);
+}
+
+static void updateBusSafety() {
+  static float s0 = -1.0f, s1 = -1.0f;          // 2 derniers échantillons bruts
+  float v = readVbusRaw();                      // volts au pin; -1.0f si erreur
+  if (v >= 0.0f) {
+    v *= CFG_VBUS_DIV;
+    if (s0 < 0.0f) { s0 = v; s1 = v; }          // amorçage
+    float m = median3(s0, s1, v);
+    s0 = s1; s1 = v;
+    float f = g_vbus_filt;                      // LPF 1er ordre, tau ≈ 2 ms
+    g_vbus_filt = (f <= 0.0f) ? m : f + 0.33f * (m - f);
+  }
+  float vb = g_vbus_filt;
+  if (vb <= 0.0f) { setBrakeDuty(0.0f); return; }  // pas encore de mesure
+
+  // Étage 3 : faute over-voltage latchée. Anti-rebond 10 ms consécutives :
+  // un transitoire ou des échantillons corrompus ne doivent JAMAIS latcher.
+  // On coupe le DRV8301 mais PAS le frein : le demi-pont AUX a son propre
+  // gate driver, indépendant d'EN_GATE, et doit continuer d'écrêter le bus
+  // (BEMF redressée par les diodes de corps tant que le moteur tourne).
+  static uint8_t ov_count = 0;
+  if (vb > CFG_VBUS_OV_TRIP) {
+    if (ov_count < 255) ov_count++;
+    if (ov_count >= 10 && !g_fault) {
+      digitalWrite(PIN_EN_GATE, LOW);
+      g_fault = true;
+      g_io.axis_error |= ERR_DC_BUS_OVER_VOLTAGE;
+      Serial.print("[FAULT] DC bus over-voltage: ");
+      Serial.print(vb, 1); Serial.println(" V");
+    }
+  } else {
+    ov_count = 0;
+  }
+
+  // Étage 2 : dérating du courant de freinage autorisé (consommé par FOCTask).
+  float s = 1.0f - (vb - CFG_VBUS_REGEN_START)
+                 / (CFG_VBUS_REGEN_FULL - CFG_VBUS_REGEN_START);
+  g_regen_iq_limit = motor.current_limit * _constrain(s, 0.0f, 1.0f);
+
+  // Étage 1 : duty frein = rampe proportionnelle en tension + feedforward sur
+  // la puissance régénérée mesurée (Ibus < 0) : duty·V²/R = -Ibus·V.
+  float duty = (vb - CFG_VBUS_BRAKE_ON) / (CFG_VBUS_BRAKE_FULL - CFG_VBUS_BRAKE_ON);
+  float ib = g_io.ibus;
+  if (ib < 0.0f) duty += (-ib) * CFG_BRAKE_R / vb;
+  setBrakeDuty(_constrain(duty, 0.0f, CFG_BRAKE_MAX_DUTY));
 }
 
 static void enableStage() {
@@ -188,6 +326,7 @@ static void applyControl() {
         Serial.print("  CFG_ZERO_ELEC_ANGLE=");
         Serial.println(motor.zero_electric_angle, 4);
       } else {
+        Serial.println("[-] initFOC FAILED -> disarm (voir logs MOT: ci-dessus)");
         g_io.axis_error |= ERR_ENCODER_FAILED;
         g_io.armed = false;
         motor.disable();
@@ -236,12 +375,11 @@ static void applyControl() {
 }
 
 static void publishTelemetry() {
-  // Lecture directe du capteur : motor.shaft_angle n'est rafraîchi qu'en RUN
-  // (par move()), et getAngle() donne l'angle multi-tours (convention ODrive).
+  // Pos/vel publiées par FOCTask (single-writer) : lecture atomique ici.
   float sgn = (motor.sensor_direction == Direction::CCW) ? -1.0f : 1.0f;
-  g_io.pos_rev = sgn * foc_sensor.getAngle() / TWO_PI;
-  g_io.vel_rev = sgn * foc_sensor.getVelocity() / TWO_PI;
-  g_io.vbus    = readVbus();
+  g_io.pos_rev = sgn * g_shaft_angle / TWO_PI;
+  g_io.vel_rev = sgn * g_shaft_vel / TWO_PI;
+  g_io.vbus    = g_vbus_filt;   // échantillonné/filtré par SafetyTask (1 kHz)
   if (g_focReady && g_iSenseOk) {
     g_io.iq_setpoint = motor.current_sp;
     g_io.iq_measured = motor.current.q;
@@ -275,10 +413,31 @@ static void FOCTask(void *) {
     // télémétrie. Au repos on rafraîchit juste le capteur pour pos/vel.
     if (!g_focReady || g_fault) {
       foc_sensor.update();
-      continue;
+    } else {
+      motor.loopFOC();             // fait sensor.update() en interne
+      motor.move(g_active_target);
+
+      // Dérating régen : ne borne QUE le couple qui s'oppose à la rotation
+      // (freinage, sp·vel < 0) — le couple moteur n'est jamais réduit.
+      // current_sp persiste entre deux move() (MOTION_DOWNSAMPLE), donc le
+      // clamp après move() couvre chaque loopFOC() suivant. En fallback
+      // voltage, current_sp est en volts : le clamp reste homogène puisque
+      // current_limit y borne aussi des volts.
+      float sp = motor.current_sp;
+      if (sp * motor.shaft_velocity < 0.0f) {
+        float lim = g_regen_iq_limit;
+        motor.current_sp = _constrain(sp, -lim, lim);
+      }
     }
-    motor.loopFOC();               // fait sensor.update() en interne
-    motor.move(g_active_target);
+
+    // Publication pos/vel à 1 kHz : seul FOCTask touche le capteur, la
+    // télémétrie ne lit plus que des floats atomiques.
+    static uint8_t tel_cnt = 0;
+    if (++tel_cnt >= 20) {
+      tel_cnt = 0;
+      g_shaft_angle = foc_sensor.getAngle();
+      g_shaft_vel   = foc_sensor.getVelocity();
+    }
   }
 }
 
@@ -288,6 +447,9 @@ static void SafetyTask(void *) {
   uint32_t fault_counter = 0;
 
   for (;;) {
+    // Mesure Vbus + frein + dérating régen + faute OV (voir updateBusSafety)
+    updateBusSafety();
+
     // Vérification de nFAULT uniquement si le driver est censé être actif
     if (digitalRead(PIN_EN_GATE) == HIGH && digitalRead(PIN_N_FAULT) == LOW) {
       fault_counter++;
@@ -450,6 +612,8 @@ static void SerialTask(void *) {
     Serial.print(" Vbus=");      Serial.print(g_io.vbus, 1);
     Serial.print(g_focReady ? " RUN" : (g_calibrated ? " idle" : " SAFE"));
     Serial.print(g_fault ? " [FAULT]" : "");
+    if (g_io.axis_error) { Serial.print(" err=0x"); Serial.print(g_io.axis_error, HEX); }
+    if (g_brake_duty > 0.0f) { Serial.print(" brk="); Serial.print(g_brake_duty, 2); }
     Serial.print(" can_tx_ok=");   Serial.print(g_can.txOkCount());
     Serial.print(" can_tx_fail="); Serial.print(g_can.txFailCount());
     Serial.print(" can_rx=");      Serial.println(g_can.rxCount());
@@ -461,6 +625,11 @@ static void SerialTask(void *) {
 //  Setup Initialization
 // ============================================================================
 void setup() {
+  // Demi-pont AUX (frein) : gates BAS immédiatement. AUX_H reste BAS en
+  // PERMANENCE — les deux FETs passants = court-circuit franc du bus.
+  pinMode(PIN_AUX_H, OUTPUT); digitalWrite(PIN_AUX_H, LOW);
+  pinMode(PIN_AUX_L, OUTPUT); digitalWrite(PIN_AUX_L, LOW);
+
   pinMode(PIN_M1_CS, OUTPUT); digitalWrite(PIN_M1_CS, HIGH); // Disable unused M1 SPI
   pinMode(PIN_N_FAULT, INPUT_PULLUP);
   analogReadResolution(12);
@@ -555,6 +724,18 @@ void setup() {
     g_io.vel_d_gain   = CFG_VEL_D * k;
   }
   g_io.last_setpoint_ms = millis();
+
+  // Frein rhéostatique (duty 0 tant que Vbus < CFG_VBUS_BRAKE_ON) + config
+  // ADC Vbus (480 cycles) AVANT le lancement de SafetyTask qui lit à 1 kHz.
+  brakeInit();
+  vbusAdcInit();
+  Serial.print("Brake resistor: "); Serial.print(CFG_BRAKE_R, 1);
+  Serial.print(" ohm on AUX, ramp "); Serial.print(CFG_VBUS_BRAKE_ON, 1);
+  Serial.print("-");                  Serial.print(CFG_VBUS_BRAKE_FULL, 1);
+  Serial.print(" V, regen derate ");  Serial.print(CFG_VBUS_REGEN_START, 1);
+  Serial.print("-");                  Serial.print(CFG_VBUS_REGEN_FULL, 1);
+  Serial.print(" V, OV trip ");       Serial.print(CFG_VBUS_OV_TRIP, 1);
+  Serial.println(" V");
 
   // CAN Simple Bus Start
   g_can.begin(CFG_CAN_NODE_ID, CFG_CAN_BAUD, NVIC_PRIO_RTOS_SAFE);

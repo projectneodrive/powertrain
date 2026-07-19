@@ -46,6 +46,17 @@
 #define PIN_ENC_B      PB5    // TIM3_CH2 / Hall B
 #define PIN_ENC_Z      PC9    // encoder index / Hall C
 
+// ---------------------------------------------------------------------------
+//  Demi-pont AUX (résistance de freinage), gate driver dédié — TIM2.
+//  Topologie ODrive v3.6 : résistance entre DC+ et le point milieu. Seul le
+//  FET BAS (AUX_L) dissipe ; le FET HAUT est tenu BAS en permanence, sa diode
+//  de corps assure la roue libre vers DC+. Ne JAMAIS piloter les deux.
+//  Pins de la v3.6 de référence — à vérifier sur le clone si le frein ne
+//  réagit pas (schéma/continuité vers le driver du demi-pont AUX).
+// ---------------------------------------------------------------------------
+#define PIN_AUX_L      PB10   // TIM2_CH3 — gate FET bas (PWM de freinage)
+#define PIN_AUX_H      PB11   // TIM2_CH4 — gate FET haut (maintenu LOW)
+
 // ============================================================================
 //  Motor / power configuration — 26pp hub motor + hall sensors
 // ============================================================================
@@ -79,6 +90,26 @@
 #define CFG_VOLT_ALIGN     3.0f     // voltage used during initFOC alignment
 #define CFG_CURRENT_LIMIT  5.0f    // A (used once current sensing is enabled)
 #define CFG_VEL_LIMIT      100.0f   // rad/s
+
+// ---------------------------------------------------------------------------
+//  Gestion de l'énergie régénérée (résistance de freinage 2 ohms sur AUX) +
+//  seuils DC bus, pour un bus 24 V nominal. Trois étages, du plus doux au
+//  plus dur — ordre requis : BRAKE_ON < BRAKE_FULL <= REGEN_START
+//  < REGEN_FULL < OV_TRIP :
+//   1. rampe de duty du frein  (BRAKE_ON -> BRAKE_FULL : 0 -> MAX_DUTY)
+//   2. dérating du courant de freinage moteur (REGEN_START -> REGEN_FULL)
+//   3. faute over-voltage latchée (OV_TRIP) : DRV8301 coupé, frein maintenu
+//  Duty max 1.0 = 26.5²/2 ≈ 350 W crête dans la résistance — transitoire ;
+//  réduire si la résistance chauffe trop en usage réel.
+// ---------------------------------------------------------------------------
+#define CFG_BRAKE_R            2.0f    // ohms, résistance sur les bornes AUX
+#define CFG_BRAKE_PWM_HZ       20000   // PWM frein (TIM2) — inaudible
+#define CFG_BRAKE_MAX_DUTY     1.0f    // 100 % possible : FET bas sans bootstrap
+#define CFG_VBUS_BRAKE_ON      25.5f   // V — début de la rampe frein
+#define CFG_VBUS_BRAKE_FULL    26.5f   // V — frein à MAX_DUTY
+#define CFG_VBUS_REGEN_START   26.5f   // V — début dérating couple de freinage
+#define CFG_VBUS_REGEN_FULL    28.0f   // V — courant régen totalement coupé
+#define CFG_VBUS_OV_TRIP       29.0f   // V — faute latchée (10 ms consécutives)
 
 // Consigne de vitesse max acceptée (rad/s) : ~90 % de la vitesse à vide
 // atteignable sous CFG_VOLT_LIMIT (KV en rpm/V -> *0.10472 en (rad/s)/V).
@@ -136,7 +167,7 @@
 // Task stack depths (in WORDS = 4 bytes). Kept modest to fit the default
 // FreeRTOS heap; bump if xTaskCreate returns pdFAIL.
 #define STACK_FOC        768
-#define STACK_SAFETY     256
+#define STACK_SAFETY     384   // updateBusSafety : HAL ADC + Serial sur faute
 #define STACK_TELEMETRY  512
 #define STACK_COMMS      768
 

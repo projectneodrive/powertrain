@@ -688,7 +688,7 @@ def main() -> int:
     parser.add_argument("--port", help="Serial port, for example COM7 or /dev/ttyACM0")
     parser.add_argument("--baud", type=int, default=115200, help="Serial baud rate (default: 115200)")
     parser.add_argument("--window", type=float, default=20.0, help="Time window to display in seconds (default: 20)")
-    parser.add_argument("--title", default="Powertrain live plot", help="Window title")
+    parser.add_argument("--title", default="Powertrain live plotter", help="Window title")
     args = parser.parse_args()
 
     app = QtWidgets.QApplication(sys.argv)

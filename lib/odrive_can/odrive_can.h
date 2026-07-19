@@ -61,6 +61,7 @@ enum ControlMode : uint8_t {
 enum AxisErrorBits : uint32_t {
   ERR_NONE              = 0x00000000,
   ERR_INVALID_STATE     = 0x00000001,
+  ERR_DC_BUS_OVER_VOLTAGE = 0x00000004,   // valeur AxisError ODrive fw-0.5.x
   ERR_MOTOR_FAILED      = 0x00000040,
   ERR_SENSORLESS_FAILED = 0x00000080,
   ERR_ENCODER_FAILED    = 0x00000100,
