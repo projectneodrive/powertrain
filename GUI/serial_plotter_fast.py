@@ -55,6 +55,7 @@ LOG_MAX_BLOCKS = 1000
 GUI_UPDATE_MS = 33          # ~30 FPS pour un affichage fluide
 LOG_FLUSH_MS = 100          # flush des logs (moins critique que le tracé)
 STATUS_UPDATE_MS = 250      # le label de statut n'a pas besoin de 30 FPS
+MIN_PLOT_HEIGHT = 220       # hauteur plancher par graphe avant défilement
 
 # Canaux stockés dans le ring buffer (ordre fixe)
 CH_T, CH_TGT, CH_IQ, CH_VEL, CH_POS, CH_VBUS, CH_MODE = range(7)
@@ -243,6 +244,37 @@ class SerialReader(threading.Thread):
             ser.write((text.rstrip("\r\n") + "\n").encode("utf-8"))
 
 
+class ScrollableGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
+    """GraphicsLayoutWidget qui redirige la molette vers le QScrollArea parent.
+
+    pg.GraphicsLayoutWidget dérive de QGraphicsView, qui ACCEPTE l'événement
+    molette (il s'en sert pour zoomer) même quand il n'a rien à faire défiler.
+    Résultat : le QScrollArea englobant ne le reçoit jamais et la colonne de
+    graphes paraît « non défilable ».
+
+    Un simple event.ignore() ne suffit pas : la remontée automatique vers le
+    parent n'est pas fiable ici (et encore moins sous WebAssembly). On pilote
+    donc directement la barre de défilement du QScrollArea englobant.
+    """
+
+    def _parent_scroll_area(self) -> Optional[QtWidgets.QScrollArea]:
+        widget = self.parentWidget()
+        while widget is not None:
+            if isinstance(widget, QtWidgets.QScrollArea):
+                return widget
+            widget = widget.parentWidget()
+        return None
+
+    def wheelEvent(self, event) -> None:  # noqa: N802 - Qt API name
+        area = self._parent_scroll_area()
+        if area is None:
+            event.ignore()
+            return
+        bar = area.verticalScrollBar()
+        bar.setValue(bar.value() - event.angleDelta().y())
+        event.accept()
+
+
 class PlotWindow(QtWidgets.QMainWindow):
     def __init__(self, window_s: float, title: str, baud: int, initial_port: Optional[str]):
         super().__init__()
@@ -273,11 +305,43 @@ class PlotWindow(QtWidgets.QMainWindow):
         left_panel = self._create_left_panel()
         plot_widget = self._create_plot_widget(title)
 
-        splitter.addWidget(left_panel)
-        splitter.addWidget(plot_widget)
+        # Les deux moitiés défilent indépendamment : la colonne de contrôles est
+        # plus haute qu'une fenêtre courte, et les 5 graphes empilés doivent
+        # garder une hauteur lisible au lieu d'être écrasés.
+        self.left_scroll = QtWidgets.QScrollArea()
+        self.left_scroll.setWidgetResizable(True)
+        self.left_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.left_scroll.setWidget(left_panel)
+
+        self.plot_scroll = QtWidgets.QScrollArea()
+        self.plot_scroll.setWidgetResizable(True)
+        self.plot_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.plot_scroll.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        # Plancher de hauteur : en dessous, on défile au lieu de rétrécir.
+        # Volontairement plus haut que la plupart des écrans avec 5 graphes,
+        # pour que chaque courbe reste lisible.
+        plot_widget.setMinimumHeight(MIN_PLOT_HEIGHT * len(PLOT_DEFS))
+        self.plot_scroll.setWidget(plot_widget)
+
+        splitter.addWidget(self.left_scroll)
+        splitter.addWidget(self.plot_scroll)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        self.setMinimumWidth(1100)
+        splitter.setSizes([380, 900])
+        self.setMinimumWidth(700)
+
+        # Le bouton doit vivre HORS du panneau, sinon le masquer emporterait
+        # aussi le moyen de le ré-afficher.
+        toolbar = self.addToolBar("View")
+        toolbar.setMovable(False)
+        self.toggle_panel_action = toolbar.addAction("Hide panel")
+        self.toggle_panel_action.setCheckable(True)
+        self.toggle_panel_action.setChecked(True)
+        self.toggle_panel_action.setShortcut("Ctrl+B")
+        self.toggle_panel_action.setToolTip("Afficher/masquer le panneau de contrôles (Ctrl+B)")
+        self.toggle_panel_action.toggled.connect(self.on_toggle_panel)
 
         self._connect_signals()
 
@@ -370,6 +434,9 @@ class PlotWindow(QtWidgets.QMainWindow):
         # Retour à la ligne automatique pour que les longues lignes restent visibles
         self.log_view.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.log_view.setWordWrapMode(QtGui.QTextOption.WrapMode.WrapAnywhere)
+        # Sans plancher, la zone de log s'écrase et le panneau n'a jamais
+        # besoin de défiler.
+        self.log_view.setMinimumHeight(200)
         logs_layout.addWidget(self.log_view)
 
         left_layout.addWidget(connection_group)
@@ -384,7 +451,7 @@ class PlotWindow(QtWidgets.QMainWindow):
     def _create_plot_widget(self, title: str) -> QtWidgets.QWidget:
         pg.setConfigOptions(antialias=False, background="w", foreground="k")
 
-        self.glw = pg.GraphicsLayoutWidget()
+        self.glw = ScrollableGraphicsLayoutWidget()
         self.glw.addLabel(title, row=0, col=0)
 
         self.plots: List[pg.PlotItem] = []
@@ -604,6 +671,11 @@ class PlotWindow(QtWidgets.QMainWindow):
 
     def on_window_changed(self, value: float) -> None:
         self.window_s = float(value)
+
+    def on_toggle_panel(self, visible: bool) -> None:
+        """Masque/affiche la colonne de contrôles pour élargir les graphes."""
+        self.left_scroll.setVisible(visible)
+        self.toggle_panel_action.setText("Hide panel" if visible else "Show panel")
 
     # ---------------------------------------------------------- main loop --
 

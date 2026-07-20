@@ -1,0 +1,37 @@
+{
+    // Multi-root workspace so the STM32 firmware and the Qt GUI each get their
+    // own C/C++ IntelliSense configuration.
+    //
+    // The repo root keeps PlatformIO's auto-generated .vscode/c_cpp_properties.json
+    // (Arduino/STM32 headers). GUI/serial_plotter_wasm has its own, pointing at
+    // the CMake-generated compile_commands.json for the Qt headers. Neither
+    // overwrites the other.
+    //
+    // Open with: File > Open Workspace from File... > neodrive.code-workspace
+    "folders": [
+        {
+            "name": "powertrain (firmware)",
+            "path": "."
+        },
+        {
+            "name": "serial_plotter_wasm (Qt GUI)",
+            "path": "GUI/serial_plotter_wasm"
+        }
+    ],
+    "settings": {
+        // Drive the Qt build from the GUI folder, not the repo root.
+        "cmake.sourceDirectory": "${workspaceFolder:serial_plotter_wasm (Qt GUI)}",
+        "cmake.buildDirectory": "${workspaceFolder:serial_plotter_wasm (Qt GUI)}/build-desktop",
+        // PlatformIO scans the firmware root only.
+        "files.associations": {
+            "*.qrc": "xml"
+        }
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-vscode.cpptools",
+            "ms-vscode.cmake-tools",
+            "platformio.platformio-ide"
+        ]
+    }
+}

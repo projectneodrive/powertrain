@@ -1,0 +1,11 @@
+--- plot scroll ---
+ content minimumSizeHint : 1108
+ content actual height   : 1100
+ viewport height         : 555
+ vbar max                : 545
+ SCROLLS                 : YES
+--- left scroll ---
+ content minimumSizeHint : 710
+ viewport height         : 555
+ vbar max                : 195
+ SCROLLS                 : YES

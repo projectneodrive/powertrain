@@ -1,4 +1,5 @@
-#include "plotwindow.h"
+﻿#include "plotwindow.h"
+#include "demosource.h"
 #include "serialbridge.h"
 #include "telemetry.h"
 
@@ -7,6 +8,7 @@
 #include <QtCharts/QLineSeries>
 #include <QtCharts/QValueAxis>
 
+#include <QAction>
 #include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QFile>
@@ -18,10 +20,16 @@
 #include <QLineEdit>
 #include <QPainter>
 #include <QPlainTextEdit>
+#include <QKeySequence>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QTextStream>
+#include <QToolBar>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
@@ -29,6 +37,37 @@
 #include <utility>
 
 namespace {
+
+// QChartView derives from QGraphicsView, which accepts wheel events even when
+// it has nothing of its own to scroll. That silently prevents the enclosing
+// QScrollArea from ever seeing them, so the plot column looks "unscrollable".
+//
+// Merely calling event->ignore() is not enough: automatic propagation to the
+// parent is unreliable here (and more so under WebAssembly), so we drive the
+// enclosing scroll area's scrollbar directly.
+class ChartView : public QChartView
+{
+public:
+    explicit ChartView(QChart *chart) : QChartView(chart)
+    {
+        setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    }
+
+protected:
+    void wheelEvent(QWheelEvent *event) override
+    {
+        for (QWidget *w = parentWidget(); w; w = w->parentWidget()) {
+            if (auto *area = qobject_cast<QScrollArea *>(w)) {
+                QScrollBar *bar = area->verticalScrollBar();
+                bar->setValue(bar->value() - event->angleDelta().y());
+                event->accept();
+                return;
+            }
+        }
+        event->ignore();
+    }
+};
 
 struct ChannelDef {
     const char *label;
@@ -48,6 +87,7 @@ const ChannelDef kChannels[kNumChannels] = {
 };
 
 constexpr double kMaxHistoryS = 300.0;   // hard cap on retained samples
+constexpr int kMinPlotHeight = 220;      // per-chart floor before scrolling
 
 } // namespace
 
@@ -63,14 +103,72 @@ PlotWindow::PlotWindow(double windowS, QWidget *parent)
 
     auto *splitter = new QSplitter(Qt::Horizontal);
     mainLayout->addWidget(splitter);
-    splitter->addWidget(buildLeftPanel());
-    splitter->addWidget(buildPlots());
+
+    // Both halves scroll independently: the controls column is taller than a
+    // short window, and the five stacked charts need room to stay readable
+    // rather than being squashed to nothing.
+    m_leftScroll = new QScrollArea;
+    m_leftScroll->setWidgetResizable(true);
+    m_leftScroll->setFrameShape(QFrame::NoFrame);
+    m_leftScroll->setWidget(buildLeftPanel());
+
+    m_plotScroll = new QScrollArea;
+    m_plotScroll->setWidgetResizable(true);
+    m_plotScroll->setFrameShape(QFrame::NoFrame);
+    m_plotScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_plotScroll->setWidget(buildPlots());
+
+    splitter->addWidget(m_leftScroll);
+    splitter->addWidget(m_plotScroll);
     splitter->setStretchFactor(0, 0);
     splitter->setStretchFactor(1, 1);
+    splitter->setSizes({380, 900});
+
+    // The toggle must live outside the panel, or hiding it would take the
+    // button away with it.
+    auto *toolbar = addToolBar(QStringLiteral("View"));
+    toolbar->setMovable(false);
+    m_togglePanelAction = toolbar->addAction(QStringLiteral("Hide panel"));
+    m_togglePanelAction->setCheckable(true);
+    m_togglePanelAction->setChecked(true);
+    m_togglePanelAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+B")));
+    m_togglePanelAction->setToolTip(QStringLiteral("Show/hide the controls panel (Ctrl+B)"));
+    connect(m_togglePanelAction, &QAction::toggled, this, &PlotWindow::onTogglePanel);
+
+    m_demo = new DemoSource(this);
 
     auto &bridge = SerialBridge::instance();
     connect(&bridge, &SerialBridge::lineReceived, this, &PlotWindow::onLineReceived);
     connect(&bridge, &SerialBridge::statusChanged, this, &PlotWindow::onStatusChanged);
+}
+
+void PlotWindow::enableDemo(bool on)
+{
+    m_demoCheck->setChecked(on);
+}
+
+void PlotWindow::dumpScrollDiagnostics() const
+{
+    const QWidget *content = m_plotScroll->widget();
+    QString out;
+    QTextStream s(&out);
+    s << "--- plot scroll ---\n"
+      << " content minimumSizeHint : " << content->minimumSizeHint().height() << "\n"
+      << " content actual height   : " << content->height() << "\n"
+      << " viewport height         : " << m_plotScroll->viewport()->height() << "\n"
+      << " vbar max                : " << m_plotScroll->verticalScrollBar()->maximum() << "\n"
+      << " SCROLLS                 : "
+      << (m_plotScroll->verticalScrollBar()->maximum() > 0 ? "YES" : "NO") << "\n"
+      << "--- left scroll ---\n"
+      << " content minimumSizeHint : " << m_leftScroll->widget()->minimumSizeHint().height() << "\n"
+      << " viewport height         : " << m_leftScroll->viewport()->height() << "\n"
+      << " vbar max                : " << m_leftScroll->verticalScrollBar()->maximum() << "\n"
+      << " SCROLLS                 : "
+      << (m_leftScroll->verticalScrollBar()->maximum() > 0 ? "YES" : "NO") << "\n";
+
+    QFile f(QStringLiteral("selftest.txt"));
+    if (f.open(QIODevice::WriteOnly | QIODevice::Text))
+        f.write(out.toUtf8());
 }
 
 // ------------------------------------------------------------------- UI --
@@ -97,6 +195,10 @@ QWidget *PlotWindow::buildLeftPanel()
     hint->setWordWrap(true);
     hint->setStyleSheet(QStringLiteral("color:#666; font-size:11px;"));
     connLayout->addWidget(hint, 2, 0, 1, 2);
+    m_demoCheck = new QCheckBox(QStringLiteral("Demo data (no hardware)"));
+    m_demoCheck->setToolTip(QStringLiteral(
+        "Feed synthetic firmware-style telemetry through the normal parse path."));
+    connLayout->addWidget(m_demoCheck, 3, 0, 1, 2);
 
     // Controls -----------------------------------------------------------
     auto *ctrlGroup = new QGroupBox(QStringLiteral("Controls"));
@@ -138,7 +240,10 @@ QWidget *PlotWindow::buildLeftPanel()
     // Status -------------------------------------------------------------
     auto *statusGroup = new QGroupBox(QStringLiteral("Status"));
     auto *statusLayout = new QVBoxLayout(statusGroup);
-    m_statusLabel = new QLabel(QStringLiteral("Disconnected"));
+    // The build stamp makes a stale, browser-cached .wasm obvious at a glance.
+    m_statusLabel = new QLabel(QStringLiteral("Disconnected — build %1 %2")
+                                   .arg(QString::fromLatin1(__DATE__),
+                                        QString::fromLatin1(__TIME__)));
     m_statusLabel->setWordWrap(true);
     statusLayout->addWidget(m_statusLabel);
 
@@ -150,6 +255,9 @@ QWidget *PlotWindow::buildLeftPanel()
     m_logView->setMaximumBlockCount(1000);
     m_logView->setLineWrapMode(QPlainTextEdit::WidgetWidth);
     m_logView->setWordWrapMode(QTextOption::WrapAnywhere);
+    // Without a floor the log box collapses and the panel never needs to
+    // scroll; with one the panel scrolls instead of squashing the monitor.
+    m_logView->setMinimumHeight(200);
     logsLayout->addWidget(m_logView);
 
     layout->addWidget(connGroup);
@@ -162,6 +270,7 @@ QWidget *PlotWindow::buildLeftPanel()
 
     // signals
     connect(m_connectButton, &QPushButton::clicked, this, &PlotWindow::onConnectClicked);
+    connect(m_demoCheck, &QCheckBox::toggled, this, &PlotWindow::onDemoToggled);
     connect(clearButton, &QPushButton::clicked, this, &PlotWindow::onClearClicked);
     connect(saveButton, &QPushButton::clicked, this, &PlotWindow::onSaveCsv);
     connect(sendButton, &QPushButton::clicked, this, &PlotWindow::onSendClicked);
@@ -178,6 +287,9 @@ QWidget *PlotWindow::buildPlots()
     auto *layout = new QVBoxLayout(container);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(2);
+    // Belt and braces: state the container's own floor rather than relying
+    // solely on the per-chart minimums propagating through the layout.
+    container->setMinimumHeight(kMinPlotHeight * kNumChannels);
 
     for (int ch = 0; ch < kNumChannels; ++ch) {
         auto *series = new QLineSeries;
@@ -205,9 +317,13 @@ QWidget *PlotWindow::buildPlots()
         if (ch == kNumChannels - 1)
             axX->setTitleText(QStringLiteral("Time [s]"));
 
-        auto *view = new QChartView(chart);
+        auto *view = new ChartView(chart);
         view->setRenderHint(QPainter::Antialiasing, false);
-        view->setMinimumHeight(120);
+        // Floor per chart: once the viewport is shorter than 5x this, the
+        // enclosing QScrollArea scrolls rather than shrinking them further.
+        // Kept generous so each trace stays readable on a laptop screen --
+        // with 5 plots this is deliberately taller than most browser viewports.
+        view->setMinimumHeight(kMinPlotHeight);
         layout->addWidget(view);
 
         m_series[ch] = series;
@@ -230,11 +346,33 @@ void PlotWindow::onConnectClicked()
         bridge.connectPort(m_baudSpin->value());
 }
 
+void PlotWindow::onTogglePanel(bool visible)
+{
+    m_leftScroll->setVisible(visible);
+    m_togglePanelAction->setText(visible ? QStringLiteral("Hide panel")
+                                         : QStringLiteral("Show panel"));
+}
+
+void PlotWindow::onDemoToggled(bool on)
+{
+    if (on) {
+        onClearClicked();
+        m_demo->start();
+        setStatusText(QStringLiteral("Demo mode â€” synthetic telemetry, no hardware"));
+    } else {
+        m_demo->stop();
+        setStatusText(QStringLiteral("Demo stopped"));
+    }
+    // The real port and the generator would interleave into one stream.
+    m_connectButton->setEnabled(!on);
+}
+
 void PlotWindow::onStatusChanged(bool connected, const QString &message)
 {
     m_connectButton->setText(connected ? QStringLiteral("Disconnect")
                                        : QStringLiteral("Connect (USB)"));
     m_baudSpin->setEnabled(!connected);
+    m_demoCheck->setEnabled(!connected);
     setStatusText(message);
 }
 
@@ -410,3 +548,4 @@ void PlotWindow::setStatusText(const QString &text)
 {
     m_statusLabel->setText(text);
 }
+

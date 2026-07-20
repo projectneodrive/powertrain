@@ -8,9 +8,11 @@
 #include <deque>
 
 QT_BEGIN_NAMESPACE
+class QAction;
 class QChart;
 class QChartView;
 class QLineSeries;
+class QScrollArea;
 class QValueAxis;
 class QPushButton;
 class QSpinBox;
@@ -24,14 +26,24 @@ QT_END_NAMESPACE
 // Number of plotted channels: Target, Iq, Vel, Pos, Vbus.
 static constexpr int kNumChannels = 5;
 
+class DemoSource;
+
 class PlotWindow : public QMainWindow
 {
     Q_OBJECT
 public:
     explicit PlotWindow(double windowS, QWidget *parent = nullptr);
 
+    // Start with synthetic telemetry (the --demo command line switch).
+    void enableDemo(bool on);
+
+    // Prints scroll-area geometry; used by the PLOTTER_SELFTEST harness.
+    void dumpScrollDiagnostics() const;
+
 private slots:
     void onConnectClicked();
+    void onDemoToggled(bool on);
+    void onTogglePanel(bool visible);
     void onStatusChanged(bool connected, const QString &message);
     void onLineReceived(const QString &line);
     void onSendClicked();
@@ -71,8 +83,15 @@ private:
     std::array<QValueAxis *, kNumChannels> m_axY{};
 
     // widgets
+    DemoSource *m_demo = nullptr;
+
+    QScrollArea *m_leftScroll = nullptr;   // wraps the controls panel
+    QScrollArea *m_plotScroll = nullptr;   // wraps the stacked charts
+    QAction *m_togglePanelAction = nullptr;
+
     QSpinBox *m_baudSpin = nullptr;
     QPushButton *m_connectButton = nullptr;
+    QCheckBox *m_demoCheck = nullptr;
     QDoubleSpinBox *m_windowSpin = nullptr;
     QCheckBox *m_freezeCheck = nullptr;
     QLineEdit *m_commandEdit = nullptr;
