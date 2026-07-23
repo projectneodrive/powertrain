@@ -397,14 +397,12 @@ class PlotWindow(QtWidgets.QMainWindow):
         self.window_spin.setSingleStep(1.0)
         self.window_spin.setDecimals(1)
         self.window_spin.setValue(self.window_s)
-        self.pause_plot_check = QtWidgets.QCheckBox("Freeze plots (keep logging)")
         control_layout.addWidget(QtWidgets.QLabel("Time window (s)"), 0, 0)
         control_layout.addWidget(self.window_spin, 0, 1)
         control_layout.addWidget(self.start_stop_button, 1, 0)
         control_layout.addWidget(self.exit_button, 1, 1)
         control_layout.addWidget(self.clear_button, 2, 0, 1, 2)
         control_layout.addWidget(self.save_log_button, 3, 0, 1, 2)
-        control_layout.addWidget(self.pause_plot_check, 4, 0, 1, 2)
 
         command_group = QtWidgets.QGroupBox("Serial Commands")
         command_layout = QtWidgets.QVBoxLayout(command_group)
@@ -720,8 +718,6 @@ class PlotWindow(QtWidgets.QMainWindow):
             new_data = True
 
         if not new_data or self.buffer.count == 0:
-            return
-        if self.pause_plot_check.isChecked():
             return
 
         view = self.buffer.ordered_view()  # vue contiguë, sans copie

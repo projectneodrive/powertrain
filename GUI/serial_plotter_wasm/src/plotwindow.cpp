@@ -414,6 +414,7 @@ void PlotWindow::addSample(double t, const std::array<double, kNumChannels> &val
     while (!m_samples.empty() && m_samples.front().t < cutoff)
         m_samples.pop_front();
 
+    redraw();
 }
 
 void PlotWindow::redraw()
