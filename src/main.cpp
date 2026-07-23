@@ -7,6 +7,7 @@
 #include <STM32FreeRTOS.h>
 #include "encoders/stm32hwencoder/STM32HWEncoder.h"
 #include "encoders/smoothing/SmoothingSensor.h"
+#include "HallSensorSmoothVel.h"
 #include "current_sense/hardware_specific/stm32/stm32_mcu.h"  // Stm32CurrentSenseParams
 #include "drv8301.h"
 #include "odrive_can.h"
@@ -50,7 +51,7 @@ BLDCDriver6PWM driver = BLDCDriver6PWM(PIN_M0_INH_A, PIN_M0_INL_A,
 BLDCMotor motor = BLDCMotor(CFG_POLE_PAIRS);
 
 #if SENSOR_TYPE == SENSOR_TYPE_HALL
-HallSensor sensor = HallSensor(PIN_ENC_A, PIN_ENC_B, PIN_ENC_Z, CFG_POLE_PAIRS);
+HallSensorSmoothVel sensor = HallSensorSmoothVel(PIN_ENC_A, PIN_ENC_B, PIN_ENC_Z, CFG_POLE_PAIRS);
 static void doHallA() { sensor.handleA(); }
 static void doHallB() { sensor.handleB(); }
 static void doHallC() { sensor.handleC(); }
@@ -214,15 +215,18 @@ static void updateBusSafety() {
   float vb = g_vbus_filt;
   if (vb <= 0.0f) { setBrakeDuty(0.0f); return; }  // pas encore de mesure
 
-  // Étage 3 : faute over-voltage latchée. Anti-rebond 10 ms consécutives :
+  // Étage 3 : faute over-voltage latchée. Anti-rebond ~10 ms consécutives :
   // un transitoire ou des échantillons corrompus ne doivent JAMAIS latcher.
+  // updateBusSafety() tourne maintenant à 200 Hz (5 ms/appel, voir
+  // SafetyTask) au lieu de 1 kHz -- 2 appels consécutifs plutôt que 10 pour
+  // garder le même temps de réponse réel (~10 ms).
   // On coupe le DRV8301 mais PAS le frein : le demi-pont AUX a son propre
   // gate driver, indépendant d'EN_GATE, et doit continuer d'écrêter le bus
   // (BEMF redressée par les diodes de corps tant que le moteur tourne).
   static uint8_t ov_count = 0;
   if (vb > CFG_VBUS_OV_TRIP) {
     if (ov_count < 255) ov_count++;
-    if (ov_count >= 10 && !g_fault) {
+    if (ov_count >= 2 && !g_fault) {
       digitalWrite(PIN_EN_GATE, LOW);
       g_fault = true;
       g_io.axis_error |= ERR_DC_BUS_OVER_VOLTAGE;
@@ -238,12 +242,22 @@ static void updateBusSafety() {
                  / (CFG_VBUS_REGEN_FULL - CFG_VBUS_REGEN_START);
   g_regen_iq_limit = motor.current_limit * _constrain(s, 0.0f, 1.0f);
 
-  // Étage 1 : duty frein = rampe proportionnelle en tension + feedforward sur
-  // la puissance régénérée mesurée (Ibus < 0) : duty·V²/R = -Ibus·V.
-  float duty = (vb - CFG_VBUS_BRAKE_ON) / (CFG_VBUS_BRAKE_FULL - CFG_VBUS_BRAKE_ON);
+  // Étage 1 : duty frein cible = rampe proportionnelle en tension +
+  // feedforward sur la puissance régénérée mesurée (Ibus < 0) :
+  // duty·V²/R = -Ibus·V.
+  float target = (vb - CFG_VBUS_BRAKE_ON) / (CFG_VBUS_BRAKE_FULL - CFG_VBUS_BRAKE_ON);
   float ib = g_io.ibus;
-  if (ib < 0.0f) duty += (-ib) * CFG_BRAKE_R / vb;
-  setBrakeDuty(_constrain(duty, 0.0f, CFG_BRAKE_MAX_DUTY));
+  if (ib < 0.0f) target += (-ib) * CFG_BRAKE_R / vb;
+  target = _constrain(target, 0.0f, CFG_BRAKE_MAX_DUTY);
+
+  // Limite de pente (CFG_BRAKE_RAMP) avant application : ni le franchissement
+  // de BRAKE_ON ni un flip de signe du couple ne doivent produire un saut de
+  // duty instantané -> à-coup mécanique. Voir board_config.h pour le compromis
+  // douceur / réactivité anti-surtension.
+  static float duty = 0.0f;
+  float step = CFG_BRAKE_RAMP * CFG_BUS_SAFETY_DT;
+  duty += _constrain(target - duty, -step, step);
+  setBrakeDuty(duty);
 }
 
 static void enableStage() {
@@ -445,10 +459,26 @@ static void FOCTask(void *) {
 static void SafetyTask(void *) {
   TickType_t last = xTaskGetTickCount();
   uint32_t fault_counter = 0;
+  uint8_t  vbus_cnt = 0;
 
   for (;;) {
-    // Mesure Vbus + frein + dérating régen + faute OV (voir updateBusSafety)
-    updateBusSafety();
+    // updateBusSafety() fait une conversion ADC BLOQUANTE (~24us, readVbusRaw).
+    // SafetyTask tourne à PRIO_SAFETY (5) > PRIO_FOC (4) : si on l'appelle à
+    // chaque tick 1kHz, cette tâche plus prioritaire vole ~24us à FOCTask
+    // toutes les 1ms pile, sur un budget de 50us/tick à 20kHz -- assez pour
+    // faire sauter un tick FOC de temps en temps, systématiquement au rythme
+    // de SafetyTask (les notifications RTOS ne sont pas mises en file :
+    // ulTaskNotifyTake(pdTRUE,...) efface le compteur, un tick manqué est
+    // perdu, pas rattrapé). Observé sur banc : apparition d'une oscillation
+    // de vitesse ~5Hz dès l'ajout de ce frein régénératif. Vbus/frein/régen
+    // n'ont physiquement pas besoin de 1kHz -- 200Hz suffit très largement
+    // (aucune dynamique utile aussi rapide sur un bus batterie) et réduit
+    // d'autant l'empiètement sur FOCTask. Le nFAULT digitalRead(), lui,
+    // reste à 1kHz : quasi gratuit, et c'est la détection de faute rapide.
+    if (++vbus_cnt >= CFG_BUS_SAFETY_DIV) {
+      vbus_cnt = 0;
+      updateBusSafety();
+    }
 
     // Vérification de nFAULT uniquement si le driver est censé être actif
     if (digitalRead(PIN_EN_GATE) == HIGH && digitalRead(PIN_N_FAULT) == LOW) {
@@ -655,6 +685,9 @@ void setup() {
   sensor.init();
 #if SENSOR_TYPE == SENSOR_TYPE_HALL
   sensor.enableInterrupts(doHallA, doHallB, doHallC);
+  // Force multi-edge velocity averaging (see HallSensorSmoothVel.h) instead
+  // of Sensor's library default 100us (effectively single-edge at our poll rate).
+  sensor.min_elapsed_time = CFG_HALL_VEL_WINDOW;
 #endif
   motor.linkSensor(&foc_sensor);
 

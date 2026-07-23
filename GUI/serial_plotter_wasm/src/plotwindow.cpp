@@ -208,14 +208,12 @@ QWidget *PlotWindow::buildLeftPanel()
     m_windowSpin->setSingleStep(1.0);
     m_windowSpin->setDecimals(1);
     m_windowSpin->setValue(m_windowS);
-    m_freezeCheck = new QCheckBox(QStringLiteral("Freeze plots (keep logging)"));
     auto *clearButton = new QPushButton(QStringLiteral("Clear Graphs + Monitor"));
     auto *saveButton = new QPushButton(QStringLiteral("Save CSV"));
     ctrlLayout->addWidget(new QLabel(QStringLiteral("Time window (s)")), 0, 0);
     ctrlLayout->addWidget(m_windowSpin, 0, 1);
     ctrlLayout->addWidget(clearButton, 1, 0, 1, 2);
     ctrlLayout->addWidget(saveButton, 2, 0, 1, 2);
-    ctrlLayout->addWidget(m_freezeCheck, 3, 0, 1, 2);
 
     // Serial commands ----------------------------------------------------
     auto *cmdGroup = new QGroupBox(QStringLiteral("Serial Commands"));
@@ -416,8 +414,6 @@ void PlotWindow::addSample(double t, const std::array<double, kNumChannels> &val
     while (!m_samples.empty() && m_samples.front().t < cutoff)
         m_samples.pop_front();
 
-    if (!m_freezeCheck->isChecked())
-        redraw();
 }
 
 void PlotWindow::redraw()

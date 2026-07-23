@@ -93,7 +93,6 @@ private:
     QPushButton *m_connectButton = nullptr;
     QCheckBox *m_demoCheck = nullptr;
     QDoubleSpinBox *m_windowSpin = nullptr;
-    QCheckBox *m_freezeCheck = nullptr;
     QLineEdit *m_commandEdit = nullptr;
     QLabel *m_statusLabel = nullptr;
     QPlainTextEdit *m_logView = nullptr;

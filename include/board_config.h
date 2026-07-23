@@ -105,6 +105,23 @@
 #define CFG_BRAKE_R            2.0f    // ohms, résistance sur les bornes AUX
 #define CFG_BRAKE_PWM_HZ       20000   // PWM frein (TIM2) — inaudible
 #define CFG_BRAKE_MAX_DUTY     1.0f    // 100 % possible : FET bas sans bootstrap
+
+// Rythme d'appel de updateBusSafety() (voir SafetyTask) : la mesure Vbus fait
+// une conversion ADC bloquante -- inutile de la faire à 1kHz (rien ne bouge
+// aussi vite sur un bus batterie), et ça évite de voler du CPU à FOCTask
+// (SafetyTask est plus prioritaire). SafetyTask tourne à 1kHz de base, donc
+// CFG_BUS_SAFETY_HZ doit rester un diviseur entier de 1000.
+#define CFG_BUS_SAFETY_HZ      200
+#define CFG_BUS_SAFETY_DIV     (1000 / CFG_BUS_SAFETY_HZ)
+#define CFG_BUS_SAFETY_DT      (1.0f / CFG_BUS_SAFETY_HZ)
+
+// Limite de pente du duty frein (duty/s). Sans rampe, tout saut de Vbus
+// (franchissement de BRAKE_ON) ou de courant régénéré (le couple change de
+// signe en 1-2 cycles PID) se traduit par un saut de duty quasi instantané --
+// à-coup mécanique sur la roue. 6.0 = 0->100% en ~167ms : à resserrer si le
+// bus dépasse REGEN_START/OV_TRIP pendant un freinage franc (la rampe retarde
+// la réaction), à desserrer si le freinage reste perceptible comme un à-coup.
+#define CFG_BRAKE_RAMP         6.0f
 #define CFG_VBUS_BRAKE_ON      25.5f   // V — début de la rampe frein
 #define CFG_VBUS_BRAKE_FULL    26.5f   // V — frein à MAX_DUTY
 #define CFG_VBUS_REGEN_START   26.5f   // V — début dérating couple de freinage
@@ -188,8 +205,30 @@
 // Points de départ à re-tuner sur banc.
 #define CFG_VEL_P        0.5f        // A/(rad/s)
 #define CFG_VEL_I        0.001f        // A/(rad·s⁻¹·s)
-#define CFG_VEL_D        0.01f
+// D=0 : HallSensor::getVelocity() (Simple FOC) dérive du dernier intervalle
+// inter-front UNIQUEMENT (pas de moyenne glissante) -> avec 26pp (156
+// segments/tour) le moindre écart d'espacement mécanique entre aimants fait
+// alterner la vitesse instantanée sur-estimée/sous-estimée d'un front à
+// l'autre. Un gain D différencie ce bruit tel quel dans la commande de
+// courant -> Iq (et donc le couple) suit le même zigzag -> saccades.
+#define CFG_VEL_D        0.0001f
 #define CFG_VEL_RAMP     30.0f      // PID output ramp (A/s)
 #define CFG_POS_P        1.0f       // position P gain ((rad/s)/rad)
-#define CFG_LPF_VEL_TF   0.05f       // velocity low-pass (s) — vitesse hall quantifiée,
-                                     // filtrer plus fort que pour un encodeur
+// Redescendu de 0.15s : ce filtre compensait le bruit de mesure hall avant
+// que HallSensorSmoothVel ne le corrige à la source (moyennage multi-front,
+// voir CFG_HALL_VEL_WINDOW ci-dessous). Un Tf=0.15s ajoute ~150ms de retard
+// dans la boucle vitesse en plus de la fenêtre de 20ms -- assez pour ronger
+// la marge de phase et transformer le bruit en oscillation entretenue
+// (observé sur banc : ~5 Hz, quasi indépendant de la vitesse cible, signature
+// classique d'un cycle limite plutôt que d'un bruit de capteur). Redescendu à
+// 0.02s : lissage résiduel léger, retard total boucle ~fenêtre+Tf ~40ms.
+#define CFG_LPF_VEL_TF   0.02f       // velocity low-pass (s)
+
+// Hall velocity averaging window (s) -- see src/HallSensorSmoothVel.h. Forces
+// Sensor::getVelocity() to span multiple hall edges per computation instead
+// of one, canceling sector-to-sector mechanical spacing error. At 26pp, edge
+// period is ~2*PI/(pole_pairs*6*vel_rad_s) -- e.g. ~8ms at 5 rad/s, so 20ms
+// spans ~2-3 edges there and more at higher speed (self-improving). Too large
+// = more feedback lag; re-tune if response feels sluggish or too small still
+// jerky.
+#define CFG_HALL_VEL_WINDOW  0.02f
