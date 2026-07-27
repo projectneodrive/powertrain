@@ -41,6 +41,14 @@ void DemoSource::start()
     const QByteArray banner =
         "--- SimpleFOC + FreeRTOS + CANSimple (DEMO, synthetic data) ---\n";
     SerialBridge::instance().feedBytes(banner.constData(), banner.size());
+
+    // A representative config dump so the Motor Config page populates in demo
+    // mode (matches reportConfig() in src/main.cpp).
+    const QByteArray cfg =
+        "cfg current_limit=4.000 vel_limit=17.780 pos_gain=1.0000 "
+        "vel_p=0.5040 vel_i=0.0504 vel_d=0.00000 pole_pairs=26 kv=8.20 "
+        "kt=1.0085 phase_r=4.2093 phase_l=4890.65 vbus_nom=24.0 volt_limit=23.5\n";
+    SerialBridge::instance().feedBytes(cfg.constData(), cfg.size());
     m_timer.start();
 }
 

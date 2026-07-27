@@ -99,6 +99,61 @@ build CMakeFiles/serial_plotter_wasm.dir/src/demosource.cpp.obj: CXX_COMPILER__s
   TARGET_PDB = serial_plotter_wasm.pdb
   TARGET_SUPPORT_DIR = CMakeFiles\serial_plotter_wasm.dir
 
+build CMakeFiles/serial_plotter_wasm.dir/src/telemetryhub.cpp.obj: CXX_COMPILER__serial_plotter_wasm_unscanned_ C$:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/telemetryhub.cpp || cmake_object_order_depends_target_serial_plotter_wasm
+  DEFINES = -DMINGW_HAS_SECURE_API=1 -DQT_CHARTS_LIB -DQT_CORE_LIB -DQT_GUI_LIB -DQT_NO_DEBUG -DQT_OPENGLWIDGETS_LIB -DQT_OPENGL_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64
+  DEP_FILE = CMakeFiles\serial_plotter_wasm.dir\src\telemetryhub.cpp.obj.d
+  FLAGS = -std=gnu++17
+  INCLUDES = -IC:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop -IC:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm -IC:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop/serial_plotter_wasm_autogen/include -isystem C:/Qt/6.8.3/mingw_64/include/QtCore -isystem C:/Qt/6.8.3/mingw_64/include -isystem C:/Qt/6.8.3/mingw_64/mkspecs/win32-g++ -isystem C:/Qt/6.8.3/mingw_64/include/QtWidgets -isystem C:/Qt/6.8.3/mingw_64/include/QtGui -isystem C:/Qt/6.8.3/mingw_64/include/QtCharts -isystem C:/Qt/6.8.3/mingw_64/include/QtOpenGL -isystem C:/Qt/6.8.3/mingw_64/include/QtOpenGLWidgets
+  OBJECT_DIR = CMakeFiles\serial_plotter_wasm.dir
+  OBJECT_FILE_DIR = CMakeFiles\serial_plotter_wasm.dir\src
+  TARGET_COMPILE_PDB = CMakeFiles\serial_plotter_wasm.dir\
+  TARGET_PDB = serial_plotter_wasm.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\serial_plotter_wasm.dir
+
+build CMakeFiles/serial_plotter_wasm.dir/src/liveplot.cpp.obj: CXX_COMPILER__serial_plotter_wasm_unscanned_ C$:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/liveplot.cpp || cmake_object_order_depends_target_serial_plotter_wasm
+  DEFINES = -DMINGW_HAS_SECURE_API=1 -DQT_CHARTS_LIB -DQT_CORE_LIB -DQT_GUI_LIB -DQT_NO_DEBUG -DQT_OPENGLWIDGETS_LIB -DQT_OPENGL_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64
+  DEP_FILE = CMakeFiles\serial_plotter_wasm.dir\src\liveplot.cpp.obj.d
+  FLAGS = -std=gnu++17
+  INCLUDES = -IC:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop -IC:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm -IC:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop/serial_plotter_wasm_autogen/include -isystem C:/Qt/6.8.3/mingw_64/include/QtCore -isystem C:/Qt/6.8.3/mingw_64/include -isystem C:/Qt/6.8.3/mingw_64/mkspecs/win32-g++ -isystem C:/Qt/6.8.3/mingw_64/include/QtWidgets -isystem C:/Qt/6.8.3/mingw_64/include/QtGui -isystem C:/Qt/6.8.3/mingw_64/include/QtCharts -isystem C:/Qt/6.8.3/mingw_64/include/QtOpenGL -isystem C:/Qt/6.8.3/mingw_64/include/QtOpenGLWidgets
+  OBJECT_DIR = CMakeFiles\serial_plotter_wasm.dir
+  OBJECT_FILE_DIR = CMakeFiles\serial_plotter_wasm.dir\src
+  TARGET_COMPILE_PDB = CMakeFiles\serial_plotter_wasm.dir\
+  TARGET_PDB = serial_plotter_wasm.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\serial_plotter_wasm.dir
+
+build CMakeFiles/serial_plotter_wasm.dir/src/plotterpage.cpp.obj: CXX_COMPILER__serial_plotter_wasm_unscanned_ C$:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/plotterpage.cpp || cmake_object_order_depends_target_serial_plotter_wasm
+  DEFINES = -DMINGW_HAS_SECURE_API=1 -DQT_CHARTS_LIB -DQT_CORE_LIB -DQT_GUI_LIB -DQT_NO_DEBUG -DQT_OPENGLWIDGETS_LIB -DQT_OPENGL_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64
+  DEP_FILE = CMakeFiles\serial_plotter_wasm.dir\src\plotterpage.cpp.obj.d
+  FLAGS = -std=gnu++17
+  INCLUDES = -IC:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop -IC:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm -IC:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop/serial_plotter_wasm_autogen/include -isystem C:/Qt/6.8.3/mingw_64/include/QtCore -isystem C:/Qt/6.8.3/mingw_64/include -isystem C:/Qt/6.8.3/mingw_64/mkspecs/win32-g++ -isystem C:/Qt/6.8.3/mingw_64/include/QtWidgets -isystem C:/Qt/6.8.3/mingw_64/include/QtGui -isystem C:/Qt/6.8.3/mingw_64/include/QtCharts -isystem C:/Qt/6.8.3/mingw_64/include/QtOpenGL -isystem C:/Qt/6.8.3/mingw_64/include/QtOpenGLWidgets
+  OBJECT_DIR = CMakeFiles\serial_plotter_wasm.dir
+  OBJECT_FILE_DIR = CMakeFiles\serial_plotter_wasm.dir\src
+  TARGET_COMPILE_PDB = CMakeFiles\serial_plotter_wasm.dir\
+  TARGET_PDB = serial_plotter_wasm.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\serial_plotter_wasm.dir
+
+build CMakeFiles/serial_plotter_wasm.dir/src/configpage.cpp.obj: CXX_COMPILER__serial_plotter_wasm_unscanned_ C$:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/configpage.cpp || cmake_object_order_depends_target_serial_plotter_wasm
+  DEFINES = -DMINGW_HAS_SECURE_API=1 -DQT_CHARTS_LIB -DQT_CORE_LIB -DQT_GUI_LIB -DQT_NO_DEBUG -DQT_OPENGLWIDGETS_LIB -DQT_OPENGL_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64
+  DEP_FILE = CMakeFiles\serial_plotter_wasm.dir\src\configpage.cpp.obj.d
+  FLAGS = -std=gnu++17
+  INCLUDES = -IC:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop -IC:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm -IC:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop/serial_plotter_wasm_autogen/include -isystem C:/Qt/6.8.3/mingw_64/include/QtCore -isystem C:/Qt/6.8.3/mingw_64/include -isystem C:/Qt/6.8.3/mingw_64/mkspecs/win32-g++ -isystem C:/Qt/6.8.3/mingw_64/include/QtWidgets -isystem C:/Qt/6.8.3/mingw_64/include/QtGui -isystem C:/Qt/6.8.3/mingw_64/include/QtCharts -isystem C:/Qt/6.8.3/mingw_64/include/QtOpenGL -isystem C:/Qt/6.8.3/mingw_64/include/QtOpenGLWidgets
+  OBJECT_DIR = CMakeFiles\serial_plotter_wasm.dir
+  OBJECT_FILE_DIR = CMakeFiles\serial_plotter_wasm.dir\src
+  TARGET_COMPILE_PDB = CMakeFiles\serial_plotter_wasm.dir\
+  TARGET_PDB = serial_plotter_wasm.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\serial_plotter_wasm.dir
+
+build CMakeFiles/serial_plotter_wasm.dir/src/pidtunerpage.cpp.obj: CXX_COMPILER__serial_plotter_wasm_unscanned_ C$:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/pidtunerpage.cpp || cmake_object_order_depends_target_serial_plotter_wasm
+  DEFINES = -DMINGW_HAS_SECURE_API=1 -DQT_CHARTS_LIB -DQT_CORE_LIB -DQT_GUI_LIB -DQT_NO_DEBUG -DQT_OPENGLWIDGETS_LIB -DQT_OPENGL_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64
+  DEP_FILE = CMakeFiles\serial_plotter_wasm.dir\src\pidtunerpage.cpp.obj.d
+  FLAGS = -std=gnu++17
+  INCLUDES = -IC:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop -IC:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm -IC:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop/serial_plotter_wasm_autogen/include -isystem C:/Qt/6.8.3/mingw_64/include/QtCore -isystem C:/Qt/6.8.3/mingw_64/include -isystem C:/Qt/6.8.3/mingw_64/mkspecs/win32-g++ -isystem C:/Qt/6.8.3/mingw_64/include/QtWidgets -isystem C:/Qt/6.8.3/mingw_64/include/QtGui -isystem C:/Qt/6.8.3/mingw_64/include/QtCharts -isystem C:/Qt/6.8.3/mingw_64/include/QtOpenGL -isystem C:/Qt/6.8.3/mingw_64/include/QtOpenGLWidgets
+  OBJECT_DIR = CMakeFiles\serial_plotter_wasm.dir
+  OBJECT_FILE_DIR = CMakeFiles\serial_plotter_wasm.dir\src
+  TARGET_COMPILE_PDB = CMakeFiles\serial_plotter_wasm.dir\
+  TARGET_PDB = serial_plotter_wasm.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\serial_plotter_wasm.dir
+
 
 # =============================================================================
 # Link build statements for EXECUTABLE target serial_plotter_wasm
@@ -107,7 +162,7 @@ build CMakeFiles/serial_plotter_wasm.dir/src/demosource.cpp.obj: CXX_COMPILER__s
 #############################################
 # Link the executable serial_plotter_wasm.exe
 
-build serial_plotter_wasm.exe: CXX_EXECUTABLE_LINKER__serial_plotter_wasm_ CMakeFiles/serial_plotter_wasm.dir/serial_plotter_wasm_autogen/mocs_compilation.cpp.obj CMakeFiles/serial_plotter_wasm.dir/src/main.cpp.obj CMakeFiles/serial_plotter_wasm.dir/src/plotwindow.cpp.obj CMakeFiles/serial_plotter_wasm.dir/src/serialbridge.cpp.obj CMakeFiles/serial_plotter_wasm.dir/src/demosource.cpp.obj | C$:/Qt/6.8.3/mingw_64/lib/libQt6Charts.a C$:/Qt/6.8.3/mingw_64/lib/libQt6OpenGLWidgets.a C$:/Qt/6.8.3/mingw_64/lib/libQt6Widgets.a C$:/Qt/6.8.3/mingw_64/lib/libQt6OpenGL.a C$:/Qt/6.8.3/mingw_64/lib/libQt6Gui.a C$:/Qt/6.8.3/mingw_64/lib/libQt6Core.a || serial_plotter_wasm_autogen serial_plotter_wasm_autogen_timestamp_deps
+build serial_plotter_wasm.exe: CXX_EXECUTABLE_LINKER__serial_plotter_wasm_ CMakeFiles/serial_plotter_wasm.dir/serial_plotter_wasm_autogen/mocs_compilation.cpp.obj CMakeFiles/serial_plotter_wasm.dir/src/main.cpp.obj CMakeFiles/serial_plotter_wasm.dir/src/plotwindow.cpp.obj CMakeFiles/serial_plotter_wasm.dir/src/serialbridge.cpp.obj CMakeFiles/serial_plotter_wasm.dir/src/demosource.cpp.obj CMakeFiles/serial_plotter_wasm.dir/src/telemetryhub.cpp.obj CMakeFiles/serial_plotter_wasm.dir/src/liveplot.cpp.obj CMakeFiles/serial_plotter_wasm.dir/src/plotterpage.cpp.obj CMakeFiles/serial_plotter_wasm.dir/src/configpage.cpp.obj CMakeFiles/serial_plotter_wasm.dir/src/pidtunerpage.cpp.obj | C$:/Qt/6.8.3/mingw_64/lib/libQt6Charts.a C$:/Qt/6.8.3/mingw_64/lib/libQt6OpenGLWidgets.a C$:/Qt/6.8.3/mingw_64/lib/libQt6Widgets.a C$:/Qt/6.8.3/mingw_64/lib/libQt6OpenGL.a C$:/Qt/6.8.3/mingw_64/lib/libQt6Gui.a C$:/Qt/6.8.3/mingw_64/lib/libQt6Core.a || serial_plotter_wasm_autogen serial_plotter_wasm_autogen_timestamp_deps
   LINK_LIBRARIES = C:/Qt/6.8.3/mingw_64/lib/libQt6Charts.a  C:/Qt/6.8.3/mingw_64/lib/libQt6OpenGLWidgets.a  C:/Qt/6.8.3/mingw_64/lib/libQt6Widgets.a  C:/Qt/6.8.3/mingw_64/lib/libQt6OpenGL.a  C:/Qt/6.8.3/mingw_64/lib/libQt6Gui.a  C:/Qt/6.8.3/mingw_64/lib/libQt6Core.a  -lmpr  -luserenv  -ld3d11  -ldxgi  -ldxguid  -ld3d12  -luser32  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
   OBJECT_DIR = CMakeFiles\serial_plotter_wasm.dir
   POST_BUILD = cd .

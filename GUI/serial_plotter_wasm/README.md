@@ -7,8 +7,41 @@ A C++/Qt port of [`serial_plotter_fast.py`](../serial_plotter_fast.py), compiled
 It parses the same `key=value` telemetry emitted by the firmware
 (`t= mode= tgt= Iq= vel= pos= Vbus=` — see [`src/main.cpp`](../../src/main.cpp)
 `SerialTask`), plots Target / Iq / Vel / Pos / Vbus on stacked live charts, shows
-the raw serial monitor, sends the single-letter commands (`A`, `I`, `M`, `C`,
-`T<val>`, `V<val>`, `KP/KI/KD<val>`), and can export the log to CSV.
+the raw serial monitor, sends commands, and can export the log to CSV.
+
+## Pages
+
+The top toolbar has a **☰ Pages** menu that switches the central view between
+three pages; the USB connection, telemetry stream and logs are shared across
+all of them (one connection, opened once).
+
+| Page | What it does |
+|------|--------------|
+| **Live Plotter** | The original plotter: five scrolling charts, serial command console (`A/I/M/C`, `T`, `V`, `KP/KI/KD`, …), status, log, CSV export. |
+| **Motor Config** | A table of motor parameters. **Read from board (Q)** pulls the live values; the writable rows (current limit, velocity limit, position gain, velocity PID) can be edited and pushed back with **Apply changes**. Hardware constants (pole pairs, KV, phase R/L, …) are shown read-only. |
+| **PID Tuner** | Live closed-loop control: arm/idle/clear, pick Velocity/Torque/Position mode, push a setpoint, and edit KP/KI/KD — all while watching the response on a LivePlot with the firmware log beneath. |
+
+The **Hide panel** toolbar button (Ctrl+B) collapses the side panel of the
+current page to give the plots full width.
+
+### Firmware serial protocol used by the pages
+
+The Config and PID pages rely on serial commands added to
+[`src/main.cpp`](../../src/main.cpp) `handleSerial()`:
+
+| Command | Meaning |
+|---------|---------|
+| `LC<A>` | set current limit (clamped to `CFG_CURRENT_LIMIT_MAX`) |
+| `LV<rad/s>` | set velocity limit (clamped to `CFG_VEL_LIMIT_MAX`) |
+| `G<val>` | set position P gain |
+| `X<rad>` | position setpoint (enters position mode) |
+| `KP/KI/KD<val>` | velocity PID gains (pre-existing) |
+| `Q` | dump the live config as one `cfg key=val …` line for the Config page |
+
+**You must reflash the firmware** for the Config/PID pages to work against real
+hardware; an older build simply won't answer `Q` or accept `LC/LV/G/X`. In
+**Demo** mode the app fabricates a `cfg` line so both pages are usable with no
+board attached.
 
 ## How USB works in the browser (important)
 

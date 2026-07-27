@@ -21,12 +21,15 @@ find, how to measure them, and how to **save** them so the board boots ready.
 | 6 | Phase inductance `L` | **Measure** (`M` command) | `CFG_PHASE_L` |
 | 7 | Sensor electrical offset | **Measure** (arm once) | `CFG_ZERO_ELEC_ANGLE` |
 | 8 | Sensor direction | **Measure** (arm once) | `CFG_SENSOR_DIRECTION` |
-| 9 | Current / velocity / voltage limits | Your design | `CFG_CURRENT_LIMIT`, `CFG_VEL_LIMIT`, `CFG_VOLT_LIMIT` |
-| 10 | Current‑loop PID | Tune | `CFG_CUR_P`, `CFG_CUR_I` |
-| 11 | Velocity‑loop PID | Tune (live: serial `KP`/`KI`/`KD` or CAN `Set_Vel_Gains`) | `CFG_VEL_P`, `CFG_VEL_I` |
+| 9 | Hall sector angles (hall only) | **Measure** (`H` command) | `CFG_HALL_CAL_OFFSETS` |
+| 10 | Current / velocity / voltage limits | Your design | `CFG_CURRENT_LIMIT`, `CFG_VEL_LIMIT`, `CFG_VOLT_LIMIT` |
+| 11 | Current‑loop PID | Tune | `CFG_CUR_P`, `CFG_CUR_I` |
+| 12 | Velocity‑loop PID | Tune (live: serial `KP`/`KI`/`KD` or CAN `Set_Vel_Gains`) | `CFG_VEL_P`, `CFG_VEL_I` |
 
-Items 1–4 come from the **datasheet**; 5–8 are **measured by the board**; 9–11
-are your **design choices / tuning**.
+Items 1–4 come from the **datasheet**; 5–9 are **measured by the board**; 10–12
+are your **design choices / tuning**. Item 9 is **hall‑specific** and only
+matters if you care about low‑ripple smoothness — skip it for a quadrature
+encoder, which is smooth by construction.
 
 ---
 
@@ -83,6 +86,73 @@ Copy both straight into `board_config.h`:
 #define CFG_SENSOR_DIRECTION 1        // +1 = CW, -1 = CCW (as printed)
 ```
 
+## Step 3b — (hall only) calibrate the hall sector angles
+
+**Skip this for a quadrature encoder.** It only helps hall‑sensored motors.
+
+SimpleFOC assumes each of the 6 hall sectors is exactly 60° electrical. Real
+hall/magnet placement is a few degrees off, *differently per sector*, so the FOC
+commutation angle is wrong inside each sector → **torque ripple at every speed**
+(felt as roughness that no velocity‑PID tuning removes). Symptom check: command a
+constant torque (`T0.3`) and watch `Iq=`; if it *ripples* while the setpoint is
+constant — and the **disarmed** shaft turns without strong detents — the roughness
+is commutation error, not the velocity loop or magnetic cogging.
+
+With the motor **free to spin** and **disarmed** (`I` first), type `H`:
+
+```
+AK H: hall-angle calibration requested (moteur désarmé)
+Hall cal: spin boucle ouverte ~10s (moteur doit tourner lentement)...
+Hall cal OK (dir=1). CFG_HALL_CAL_OFFSETS =
+{
+   0.0012345f,  // secteur 0  (1.84 deg elec)
+  -0.0008765f,  // secteur 1  (-1.31 deg elec)
+   ...
+};
+```
+
+The board spins the motor **slowly in open loop for ~10 s** (this is expected —
+don't touch it): it drives a rotating field at a known electrical angle, so the
+*commanded* angle is the *true* angle, and it measures how far each hall sector's
+real transition sits from the 60° grid. The 6 printed values are **mean‑zero**
+mechanical corrections (the global offset stays with `CFG_ZERO_ELEC_ANGLE`), and
+they're **applied immediately in RAM** for the rest of the session.
+
+Then **re‑arm** (`A`) so `initFOC` recomputes `CFG_ZERO_ELEC_ANGLE` /
+`CFG_SENSOR_DIRECTION` *on top of* the corrected hall angles — use **those**
+re‑armed values in Step 3 above. Test `V2` / `V5`: the `Iq` ripple at constant
+speed should drop noticeably.
+
+Save the 6 numbers and enable them at boot:
+
+```c
+#define CFG_HALL_PRECALIBRATED 1
+#define CFG_HALL_CAL_OFFSETS  { 0.0012345f, -0.0008765f, /* …4 more… */ }
+```
+
+> **Tuning the spin:** if `H` prints `secteur peu/non vu` the rotor didn't turn —
+> raise `CFG_HALL_CAL_VOLTAGE` (3 V → 4–5 V). `CFG_HALL_CAL_ELEC_SPEED` /
+> `CFG_HALL_CAL_REVS` control how slow/long the sweep is. `H` blocks the comms
+> loop for the duration (like `M`), so no CAN traffic while it runs.
+>
+> **Expectation:** this removes most of the commutation ripple, but hall FOC (only
+> 156 angle points/rev) is never as smooth as an encoder. What remains after a
+> good calibration is the hall resolution itself.
+>
+> **A once‑per‑rev "click" is not a hall‑placement problem.** The 6 offsets are
+> averaged over all 26 electrical cycles, so a *single* mislocated transition (1
+> of the 156 per rev) would be washed out. We tried a per‑transition (156‑bin)
+> calibration to catch exactly that: it found **no outlier** — the worst
+> transition matched its sector's normal offset — and applying 156 individually
+> measured corrections just injected measurement noise, making motion *worse*. So
+> a regular click that survives the 6‑sector calibration is **magnetic**, not a
+> commutation‑angle error: a slightly stronger/weaker magnet gives a once‑per‑rev
+> torque/BEMF variation that hall‑angle calibration cannot correct (it fixes
+> *timing*, not *torque*). Confirm it's not mechanical first (disarm, turn the
+> shaft by hand — the shaft should feel smooth). The real cure for a torque‑based
+> ripple is a quadrature encoder **with index** (absolute, repeatable position →
+> enables true position‑indexed anti‑cogging); the hall has no absolute zero.
+
 ## Step 4 — save & use it (pre‑calibrated boot)
 
 Now flip the switch on and rebuild:
@@ -136,6 +206,9 @@ longer has to rotate freely to arm, so you can arm with the wheel on the ground.
 #define CFG_ZERO_ELEC_ANGLE  2.7183f
 #define CFG_SENSOR_DIRECTION 1
 #define CFG_PRECALIBRATED    1
+// --- hall smoothness (hall only; Step 3b) ---
+#define CFG_HALL_PRECALIBRATED 1
+#define CFG_HALL_CAL_OFFSETS  { 0.0012f, -0.0009f, 0.0004f, 0.0007f, -0.0011f, -0.0003f }
 ```
 
 ## Notes & limits
@@ -146,3 +219,7 @@ longer has to rotate freely to arm, so you can arm with the wheel on the ground.
   check wiring/`SENSOR_TYPE`, and for hall verify the A/B/C order on PB4/PB5/PC9.
 - `Kt` is only as good as the datasheet KV; if torque readings are off, refine
   `CFG_KV`.
+- **Re‑run the hall calibration** (Step 3b, `H`) whenever you remount the hall
+  PCB, change the magnet ring, or swap the motor — the offsets are tied to the
+  physical hall‑to‑magnet alignment. Rewiring the phases or halls also invalidates
+  it (re‑do Step 3 **and** 3b).

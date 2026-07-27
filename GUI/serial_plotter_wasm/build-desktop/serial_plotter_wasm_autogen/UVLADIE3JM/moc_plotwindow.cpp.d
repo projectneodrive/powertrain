@@ -1,8 +1,6 @@
 C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop/serial_plotter_wasm_autogen/UVLADIE3JM/moc_plotwindow.cpp: C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/plotwindow.h \
   C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop/serial_plotter_wasm_autogen/moc_predefs.h \
-  C:/Qt/6.8.3/mingw_64/include/QtCore/QHash \
-  C:/Qt/6.8.3/mingw_64/include/QtCore/QString \
-  C:/Qt/6.8.3/mingw_64/include/QtCore/QVector \
+  C:/Qt/6.8.3/mingw_64/include/QtCore/QList \
   C:/Qt/6.8.3/mingw_64/include/QtCore/q20functional.h \
   C:/Qt/6.8.3/mingw_64/include/QtCore/q20iterator.h \
   C:/Qt/6.8.3/mingw_64/include/QtCore/q20memory.h \
@@ -121,7 +119,6 @@ C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-deskt
   C:/Qt/6.8.3/mingw_64/include/QtCore/qutf8stringview.h \
   C:/Qt/6.8.3/mingw_64/include/QtCore/qvariant.h \
   C:/Qt/6.8.3/mingw_64/include/QtCore/qvarlengtharray.h \
-  C:/Qt/6.8.3/mingw_64/include/QtCore/qvector.h \
   C:/Qt/6.8.3/mingw_64/include/QtCore/qversiontagging.h \
   C:/Qt/6.8.3/mingw_64/include/QtCore/qxptype_traits.h \
   C:/Qt/6.8.3/mingw_64/include/QtCore/qyieldcpu.h \
@@ -180,7 +177,6 @@ C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-deskt
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/bits/cpp_type_traits.h \
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/bits/cxxabi_forced.h \
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/bits/cxxabi_init_exception.h \
-  C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/bits/deque.tcc \
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/bits/enable_special_members.h \
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/bits/erase_if.h \
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/bits/exception.h \
@@ -221,7 +217,6 @@ C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-deskt
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/bits/stl_algobase.h \
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/bits/stl_bvector.h \
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/bits/stl_construct.h \
-  C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/bits/stl_deque.h \
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/bits/stl_function.h \
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/bits/stl_heap.h \
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/bits/stl_iterator.h \
@@ -267,7 +262,6 @@ C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-deskt
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/cwchar \
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/debug/assertions.h \
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/debug/debug.h \
-  C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/deque \
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/exception \
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/ext/aligned_buffer.h \
   C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/ext/alloc_traits.h \

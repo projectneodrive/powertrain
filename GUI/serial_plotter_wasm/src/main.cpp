@@ -30,11 +30,5 @@ int main(int argc, char *argv[])
     window.show();
     if (parser.isSet(demoOption))
         window.enableDemo(true);
-    if (qEnvironmentVariableIsSet("PLOTTER_SELFTEST")) {
-        window.resize(1000, 600);
-        QCoreApplication::processEvents();
-        window.dumpScrollDiagnostics();
-        return 0;
-    }
     return app.exec();
 }

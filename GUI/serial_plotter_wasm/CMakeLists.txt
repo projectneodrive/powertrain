@@ -19,6 +19,11 @@ qt_add_executable(serial_plotter_wasm
     src/plotwindow.cpp
     src/serialbridge.cpp
     src/demosource.cpp
+    src/telemetryhub.cpp
+    src/liveplot.cpp
+    src/plotterpage.cpp
+    src/configpage.cpp
+    src/pidtunerpage.cpp
 )
 
 target_link_libraries(serial_plotter_wasm PRIVATE

@@ -77,6 +77,7 @@ volatile float g_active_target = 0.0f;
 volatile bool  g_fault         = false;
 volatile bool  g_focReady      = false;
 static   bool  g_calibrated    = false;
+static   volatile bool g_req_hall_cal = false;  // commande série 'H' -> calib angles hall
 static   bool  g_iSenseOk      = false;
 static   TaskHandle_t g_focTask = nullptr;
 static   HardwareTimer *g_focTimer = nullptr;
@@ -95,6 +96,10 @@ volatile float g_regen_iq_limit = CFG_CURRENT_LIMIT; // |Iq| de freinage max (A)
 volatile float g_brake_duty     = 0.0f;              // duty frein appliqué [0..1]
 static   HardwareTimer *g_brakeTimer = nullptr;
 static   uint32_t g_brakeChan = 0;
+static   float    g_brake_ramp      = 0.0f;          // état de la rampe de duty
+// Test manuel du frein (commande série 'B<duty>') — voir board_config.h.
+static   volatile float    g_brake_test_duty = 0.0f;
+static   volatile uint32_t g_brake_test_end  = 0;    // millis de fin ; 0 = inactif
 
 // 20 kHz FOC tick ISR
 static void onFocTick() {
@@ -237,6 +242,22 @@ static void updateBusSafety() {
     ov_count = 0;
   }
 
+  // Test manuel du frein : force le duty, moteur désarmé uniquement (aucun
+  // couple en jeu). Prend la main sur la régulation normale du duty le temps de
+  // l'impulsion, mais APRÈS l'étage 3 : la faute over-voltage doit rester armée
+  // en permanence. Voir CFG_BRAKE_TEST_* dans board_config.h.
+  if (g_brake_test_end != 0) {
+    if ((int32_t)(millis() - g_brake_test_end) < 0 && !g_focReady && !g_fault) {
+      setBrakeDuty(g_brake_test_duty);
+      return;
+    }
+    g_brake_test_end = 0;
+    g_brake_ramp     = 0.0f;
+    setBrakeDuty(0.0f);
+    Serial.print("[brake test] fin. Vbus="); Serial.print(vb, 1);
+    Serial.println(" V — l'alim a-t-elle débité ? la résistance a-t-elle chauffé ?");
+  }
+
   // Étage 2 : dérating du courant de freinage autorisé (consommé par FOCTask).
   float s = 1.0f - (vb - CFG_VBUS_REGEN_START)
                  / (CFG_VBUS_REGEN_FULL - CFG_VBUS_REGEN_START);
@@ -250,21 +271,118 @@ static void updateBusSafety() {
   if (ib < 0.0f) target += (-ib) * CFG_BRAKE_R / vb;
   target = _constrain(target, 0.0f, CFG_BRAKE_MAX_DUTY);
 
-  // Limite de pente (CFG_BRAKE_RAMP) avant application : ni le franchissement
-  // de BRAKE_ON ni un flip de signe du couple ne doivent produire un saut de
-  // duty instantané -> à-coup mécanique. Voir board_config.h pour le compromis
-  // douceur / réactivité anti-surtension.
-  static float duty = 0.0f;
+  // Limite de pente (CFG_BRAKE_RAMP) avant application.
   float step = CFG_BRAKE_RAMP * CFG_BUS_SAFETY_DT;
-  duty += _constrain(target - duty, -step, step);
-  setBrakeDuty(duty);
+  g_brake_ramp += _constrain(target - g_brake_ramp, -step, step);
+  setBrakeDuty(g_brake_ramp);
 }
 
 static void enableStage() {
-  motor.enable(); 
+  motor.enable();
   delay(5); // Setup time for DRV8301 SPI stability
   drv.setGain(DRV8301::gainFromVpV(CFG_DRV_GAIN));
 }
+
+#if SENSOR_TYPE == SENSOR_TYPE_HALL
+// ---------------------------------------------------------------------------
+//  Calibration des angles réels de transition hall (voir board_config.h +
+//  HallSensorSmoothVel.h). Spin boucle ouverte à vitesse électrique imposée :
+//  l'angle commandé (theta) EST l'angle vrai. Le résidu moyen par secteur entre
+//  theta et l'angle rapporté (grille 60° uniforme) = l'erreur de placement du
+//  secteur ; on retire la moyenne (offset global -> zero_electric_angle) et on
+//  convertit élec->méca. 'dir' (sens secteur vs theta) est mesuré via la
+//  séquence des secteurs, donc indépendant du sensor_direction d'initFOC.
+//  Bloque CommsTask ~10 s (comme characteriseMotor). À lancer moteur DÉSARMÉ.
+// ---------------------------------------------------------------------------
+static bool calibrateHallAngles() {
+  const float Uq     = CFG_HALL_CAL_VOLTAGE;
+  const float wel    = CFG_HALL_CAL_ELEC_SPEED;   // rad/s élec
+  const int   revs   = CFG_HALL_CAL_REVS;
+  const float dt     = 0.0005f;                    // 500 us / pas
+  const float dtheta = wel * dt;
+  const float pp     = (float)CFG_POLE_PAIRS;
+
+  Serial.println("Hall cal: spin boucle ouverte ~10s (moteur doit tourner lentement)...");
+  enableStage();
+
+  // Verrouiller le rotor sur theta=0 et laisser le transitoire s'amortir, sinon
+  // les premières transitions capturées seraient faussées par l'oscillation.
+  for (int i = 0; i < 500; i++) { motor.setPhaseVoltage(Uq, 0.0f, 0.0f); delay(1); }
+
+  float sacc[6] = {0}, cacc[6] = {0};   // moyenne circulaire du résidu par secteur
+  int   cnt[6]  = {0};
+  int   seq_up = 0, seq_down = 0;       // vote sur le sens (secteur vs theta)
+  int   dir = 0;
+  float theta = 0.0f;
+  const float theta_end = (float)revs * _2PI;
+  int8_t prev = sensor.electric_sector;
+
+  while (theta < theta_end) {
+    theta += dtheta;
+    motor.setPhaseVoltage(Uq, 0.0f, theta);
+    delayMicroseconds(500);
+
+    int8_t s = sensor.electric_sector;                 // live (ISR)
+    if (s != prev && s >= 0 && s <= 5 && prev >= 0 && prev <= 5) {
+      int d = s - prev;                                // sens de progression des secteurs
+      if (d == 1 || d == -5)      seq_up++;
+      else if (d == -1 || d == 5) seq_down++;
+      prev = s;
+    }
+    if (theta < 2.0f * _2PI) continue;                 // 2 tours de mise en régime
+    if (dir == 0) dir = (seq_up >= seq_down) ? 1 : -1; // sens figé après le régime
+
+    // Résidu élec = theta - dir*pp*angle_prev, ramené mod 2PI. Le terme
+    // full_rotations disparaît mod 2PI (pp*2PI ≡ 0), donc lire angle_prev
+    // (getMechanicalAngle, float atomique) suffit et évite tout déchirement.
+    int8_t sc = sensor.electric_sector;
+    if (sc < 0 || sc > 5) continue;
+    float r = theta - (float)dir * pp * sensor.getMechanicalAngle();
+    sacc[sc] += sinf(r);
+    cacc[sc] += cosf(r);
+    cnt[sc]++;
+  }
+
+  motor.setPhaseVoltage(0.0f, 0.0f, theta);
+  motor.disable();
+
+  for (int s = 0; s < 6; s++) {
+    if (cnt[s] < 5) {
+      Serial.println("[-] Hall cal ÉCHEC : secteur peu/non vu (le moteur a-t-il tourné ? monter CFG_HALL_CAL_VOLTAGE).");
+      return false;
+    }
+  }
+
+  // Résidu moyen (circulaire) par secteur, puis retrait de la moyenne globale.
+  float res[6], ms = 0.0f, mc = 0.0f;
+  for (int s = 0; s < 6; s++) {
+    res[s] = atan2f(sacc[s], cacc[s]);   // [-pi, pi]
+    ms += sinf(res[s]); mc += cosf(res[s]);
+  }
+  float mean = atan2f(ms, mc);
+
+  Serial.print("Hall cal OK (dir="); Serial.print(dir);
+  Serial.println("). CFG_HALL_CAL_OFFSETS =");
+  Serial.println("{");
+  for (int s = 0; s < 6; s++) {
+    float off_e = res[s] - mean;                 // résidu élec mean-zéro
+    while (off_e >  _PI) off_e -= _2PI;
+    while (off_e < -_PI) off_e += _2PI;
+    // Δméca à ajouter à angle_prev : dir*off_e/pp (voir dérivation board_config.h).
+    float off_m = (float)dir * off_e / pp;
+    sensor.sector_offset[s] = off_m;
+    Serial.print("  "); Serial.print(off_m, 7); Serial.print("f,");
+    Serial.print("  // secteur "); Serial.print(s);
+    Serial.print("  ("); Serial.print(off_e * 180.0f / _PI, 2); Serial.println(" deg elec)");
+  }
+  Serial.println("};");
+  Serial.println("-> copier dans board_config.h puis CFG_HALL_PRECALIBRATED=1 pour figer.");
+
+  sensor.offsets_active = true;
+  g_calibrated = false;   // forcer un re-initFOC au prochain arm (zero_electric_angle avec offsets actifs)
+  return true;
+}
+#endif // SENSOR_TYPE_HALL
 
 // Axis State Machine (1 kHz)
 static void applyControl() {
@@ -300,21 +418,47 @@ static void applyControl() {
   bool safe = !g_io.estop && !g_fault;
 
   // --- MOTOR_CALIBRATION (R/L Measurement) ---
-  if (g_io.req_characterise && !g_focReady) {
+  // Toujours répondre (et toujours consommer le flag) : characteriseMotor prend
+  // la main sur setPhaseVoltage, donc exige le moteur DÉSARMÉ. Sans ce retour,
+  // un 'M' envoyé armé était silencieusement ignoré, flag laissé actif.
+  if (g_io.req_characterise) {
     g_io.req_characterise = false;
-    if (g_iSenseOk && safe) {
-      Serial.println("Characterising motor (R/L)...");
-      enableStage();
-      motor.characteriseMotor(CFG_CHAR_VOLTAGE);
-      motor.disable();
-      Serial.print("  R = "); Serial.print(motor.phase_resistance, 4);
-      Serial.print(" ohm   L = "); Serial.print(motor.phase_inductance * 1e6f, 2);
-      Serial.println(" uH");
+    if (g_focReady || g_io.armed) {
+      Serial.println("[!] M: désarmer d'abord (envoyer 'I'), puis 'M'.");
+    } else if (!g_iSenseOk) {
+      Serial.println("[!] M: current-sense non initialisé (voir boot).");
+    } else if (!safe) {
+      Serial.println("[!] M: faute active -> 'C' pour l'effacer d'abord.");
     } else {
-      Serial.println("[!] Characterise requires current sensing + safe state");
+      Serial.println("Characterising motor (R/L)... (quelques secondes, moteur immobile)");
+      enableStage();
+      int rc = motor.characteriseMotor(CFG_CHAR_VOLTAGE);
+      motor.disable();
+      if (rc == 0) {
+        Serial.print("  R = "); Serial.print(motor.phase_resistance, 4);
+        Serial.print(" ohm   L = "); Serial.print(motor.phase_inductance * 1e6f, 2);
+        Serial.println(" uH");
+      } else {
+        // 1=CS non init, 2=volt<=0, 3=courant trop faible (monter CFG_CHAR_VOLTAGE), 4=R<=0
+        Serial.print("[!] Characterise échec, code "); Serial.println(rc);
+      }
     }
     return;
   }
+
+#if SENSOR_TYPE == SENSOR_TYPE_HALL
+  // --- CALIBRATION ANGLES HALL (commande série 'H', moteur désarmé) ---
+  if (g_req_hall_cal && !g_focReady) {
+    g_req_hall_cal = false;
+    if (safe && !g_io.armed) {
+      calibrateHallAngles();
+      motor.disable();
+    } else {
+      Serial.println("[!] Hall cal exige moteur désarmé + état sain (envoyer 'I' puis 'H').");
+    }
+    return;
+  }
+#endif
 
   bool want = g_io.armed && safe;
 
@@ -359,7 +503,17 @@ static void applyControl() {
         // et l'intégrateur se charge au max sans jamais converger.
         float vmax = (motor.velocity_limit < CFG_VEL_CMD_MAX) ? motor.velocity_limit
                                                               : CFG_VEL_CMD_MAX;
-        g_active_target = _constrain(g_io.input_vel, -vmax, vmax);
+        float cmd = _constrain(g_io.input_vel, -vmax, vmax);
+        // Rampe d'accélération de la consigne (CFG_VEL_ACCEL, rad/s²) : glisse
+        // g_active_target vers cmd au lieu d'un échelon. applyControl tourne à
+        // 1 kHz -> pas = accel * 1ms. Voir board_config.h (évite le trip OV sur
+        // gros échelon avec l'alim de banc). 0 = échelon direct.
+        if (CFG_VEL_ACCEL > 0.0f) {
+          float step = CFG_VEL_ACCEL * 0.001f;
+          g_active_target += _constrain(cmd - g_active_target, -step, step);
+        } else {
+          g_active_target = cmd;
+        }
         break;
       }
       case CTRL_POSITION:
@@ -507,6 +661,27 @@ static void CommsTask(void *) {
   }
 }
 
+// Dump de la configuration courante sur une seule ligne préfixée "cfg " pour
+// que le GUI la distingue de la télémétrie ("t=..."). Les 6 premiers champs
+// sont réglables via série (LC/LV/G puis KP/KI/KD) ; les suivants sont des
+// constantes matérielles compile-time, en lecture seule côté GUI.
+static void reportConfig() {
+  Serial.print("cfg current_limit="); Serial.print(motor.current_limit, 3);
+  Serial.print(" vel_limit=");        Serial.print(motor.velocity_limit, 3);
+  Serial.print(" pos_gain=");         Serial.print(motor.P_angle.P, 4);
+  Serial.print(" vel_p=");            Serial.print(g_io.vel_gain, 4);
+  Serial.print(" vel_i=");            Serial.print(g_io.vel_int_gain, 4);
+  Serial.print(" vel_d=");            Serial.print(g_io.vel_d_gain, 5);
+  Serial.print(" pole_pairs=");       Serial.print(CFG_POLE_PAIRS);
+  Serial.print(" kv=");               Serial.print(CFG_KV, 2);
+  Serial.print(" kt=");               Serial.print(CFG_KT, 4);
+  Serial.print(" phase_r=");          Serial.print(motor.phase_resistance, 4);
+  Serial.print(" phase_l=");          Serial.print(motor.phase_inductance * 1e6f, 2);
+  Serial.print(" vbus_nom=");         Serial.print(CFG_VBUS_NOMINAL, 1);
+  Serial.print(" volt_limit=");       Serial.print(motor.voltage_limit, 1);
+  Serial.println();
+}
+
 // SerialTask (10 Hz - Debug Console)
 static void handleSerial() {
   static char buf[24];
@@ -539,6 +714,12 @@ static void handleSerial() {
             g_io.req_characterise = true;
             Serial.println("AK M: characterise requested");
             break;
+#if SENSOR_TYPE == SENSOR_TYPE_HALL
+          case 'H': case 'h':
+            g_req_hall_cal = true;
+            Serial.println("AK H: hall-angle calibration requested (moteur désarmé)");
+            break;
+#endif
           case 'T': case 't': {
             float old = g_io.input_torque;
             g_io.control_mode = CTRL_TORQUE;   g_io.input_torque = v;
@@ -555,6 +736,26 @@ static void handleSerial() {
             Serial.print("AK V: vel "); Serial.print(old, 2);
             Serial.print(" -> ");       Serial.print(v, 2);
             Serial.println(" rad/s");
+            break;
+          }
+          case 'B': case 'b': {
+            // B<duty> : impulsion de test sur la résistance de freinage.
+            if (g_focReady || g_io.armed) {
+              Serial.println("[!] B: désarmer d'abord (envoyer 'I'), puis 'B<duty>'.");
+              break;
+            }
+            float d = _constrain(v, 0.0f, CFG_BRAKE_TEST_MAX_DUTY);
+            g_brake_test_duty = d;
+            g_brake_test_end  = millis() + CFG_BRAKE_TEST_MS;
+            Serial.print("AK B: brake duty "); Serial.print(d, 2);
+            Serial.print(" pendant ");        Serial.print(CFG_BRAKE_TEST_MS);
+            Serial.println(" ms");
+            Serial.print("     attendu sur l'alim: +");
+            Serial.print(d * g_vbus_filt / CFG_BRAKE_R, 2);
+            Serial.print(" A (");
+            Serial.print(d * g_vbus_filt * g_vbus_filt / CFG_BRAKE_R, 0);
+            Serial.println(" W dans la résistance).");
+            Serial.println("     Rien sur l'ampèremètre + résistance froide = demi-pont AUX non piloté.");
             break;
           }
           case 'C': case 'c':
@@ -591,6 +792,56 @@ static void handleSerial() {
             g_io.req_vel_gains = true;
             break;
           }
+          case 'L': case 'l': {
+            // L<C|V><val> : limites runtime. Bornées à un plafond dur pour
+            // qu'un client distant ne demande jamais une valeur dangereuse.
+            v = atof(buf + 2);
+            switch (buf[1]) {
+              case 'C': case 'c': {
+                float old = g_io.current_limit;
+                g_io.current_limit = _constrain(v, 0.0f, CFG_CURRENT_LIMIT_MAX);
+                Serial.print("AK LC: current_limit "); Serial.print(old, 2);
+                Serial.print(" -> ");                   Serial.print(g_io.current_limit, 2);
+                Serial.println(" A");
+                break;
+              }
+              case 'V': case 'v': {
+                float old = g_io.vel_limit;
+                g_io.vel_limit = _constrain(v, 0.0f, CFG_VEL_LIMIT_MAX);
+                Serial.print("AK LV: vel_limit "); Serial.print(old, 2);
+                Serial.print(" -> ");               Serial.print(g_io.vel_limit, 2);
+                Serial.println(" rad/s");
+                break;
+              }
+              default:
+                Serial.println("AK L?: use LC<A> or LV<rad/s>");
+                break;
+            }
+            break;
+          }
+          case 'G': case 'g': {
+            // G<val> : gain P de position (P_angle.P). Appliqué en boucle
+            // fermée par applyControl si > 0.
+            float old = g_io.pos_gain;
+            g_io.pos_gain = (v > 0.0f) ? v : 0.0f;
+            Serial.print("AK G: pos_gain "); Serial.print(old, 4);
+            Serial.print(" -> ");            Serial.println(g_io.pos_gain, 4);
+            break;
+          }
+          case 'X': case 'x': {
+            // X<val> : consigne de position (rad) -> mode position.
+            float old = g_io.input_pos;
+            g_io.control_mode = CTRL_POSITION; g_io.input_pos = v;
+            g_io.last_setpoint_ms = millis();
+            Serial.print("AK X: pos "); Serial.print(old, 3);
+            Serial.print(" -> ");       Serial.print(v, 3);
+            Serial.println(" rad");
+            break;
+          }
+          case 'Q': case 'q':
+            // Q : dump de la config courante (ligne "cfg ...") pour le GUI.
+            reportConfig();
+            break;
           default:
             Serial.print("AK ?: unknown '"); Serial.print(buf[0]);
             Serial.println("'");
@@ -688,6 +939,14 @@ void setup() {
   // Force multi-edge velocity averaging (see HallSensorSmoothVel.h) instead
   // of Sensor's library default 100us (effectively single-edge at our poll rate).
   sensor.min_elapsed_time = CFG_HALL_VEL_WINDOW;
+  // Corrections d'angle de secteur hall pré-calibrées (voir board_config.h +
+  // commande série 'H'). Sinon offsets nuls/inactifs jusqu'à un 'H' en session.
+  if (CFG_HALL_PRECALIBRATED) {
+    const float hall_cal[6] = CFG_HALL_CAL_OFFSETS;
+    for (int i = 0; i < 6; i++) sensor.sector_offset[i] = hall_cal[i];
+    sensor.offsets_active = true;
+    Serial.println("Hall sector offsets: PRECALIBRATED (CFG_HALL_CAL_OFFSETS actifs)");
+  }
 #endif
   motor.linkSensor(&foc_sensor);
 
@@ -748,6 +1007,7 @@ void setup() {
   g_io.input_vel     = 0.0f;
   g_io.vel_limit     = CFG_VEL_LIMIT;
   g_io.current_limit = CFG_CURRENT_LIMIT;
+  g_io.pos_gain      = CFG_POS_P;   // miroir du gain P position (commande 'G')
   // Miroirs des gains vitesse en Nm/(rad/s), inverse exact de l'application
   // dans applyControl() (les CFG_* sont en A/(rad/s), ou en V en fallback)
   {
@@ -786,7 +1046,12 @@ void setup() {
   }
 
   Serial.println("SAFE state (disarmed). Send 'A' via serial or CAN CLOSED_LOOP state to arm.");
-  Serial.println("Serial cmds: A arm | I idle | V<rad/s> | T<Nm> | M charac R/L | C clear | KP/KI/KD<v> vel PID | K show");
+#if SENSOR_TYPE == SENSOR_TYPE_HALL
+  Serial.println("Serial cmds: A arm | I idle | V<rad/s> | T<Nm> | X<rad> pos | M charac R/L | H hall-cal | B<duty> brake-test | C clear | KP/KI/KD<v> vel PID | K show");
+#else
+  Serial.println("Serial cmds: A arm | I idle | V<rad/s> | T<Nm> | X<rad> pos | M charac R/L | B<duty> brake-test | C clear | KP/KI/KD<v> vel PID | K show");
+#endif
+  Serial.println("  config:    LC<A> current-lim | LV<rad/s> vel-lim | G<v> pos-gain | Q dump config (cfg ...)");
   vTaskStartScheduler();
   for (;;) {}
 }

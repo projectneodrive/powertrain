@@ -1,5 +1,13 @@
+# CMake build directories (WASM, desktop, tests) — anywhere in the tree.
 build/
+build-*/
+**/build/
+**/build-*/
+
+# Stray build/test outputs
 *.wasm
 *.o
+*.obj
 CMakeCache.txt
 CMakeFiles/
+selftest.txt

@@ -10,6 +10,7 @@
 #pragma once
 #include <Arduino.h>
 
+#pragma region "Pinout / Hardware Configuration"
 // ---------------------------------------------------------------------------
 //  Gate driver (DRV8301) — TIM1 6-PWM
 // ---------------------------------------------------------------------------
@@ -56,6 +57,7 @@
 // ---------------------------------------------------------------------------
 #define PIN_AUX_L      PB10   // TIM2_CH3 — gate FET bas (PWM de freinage)
 #define PIN_AUX_H      PB11   // TIM2_CH4 — gate FET haut (maintenu LOW)
+#pragma endregion
 
 // ============================================================================
 //  Motor / power configuration — 26pp hub motor + hall sensors
@@ -86,10 +88,16 @@
 // ---------------------------------------------------------------------------
 #define CFG_VBUS_NOMINAL   24.0f    // driver.voltage_power_supply
 #define CFG_PWM_FREQ_HZ    20000    // 20 kHz (matches FOC tick; keeps sense window sane)
-#define CFG_VOLT_LIMIT     23.0f     // motor/driver voltage limit (safety)
-#define CFG_VOLT_ALIGN     3.0f     // voltage used during initFOC alignment
-#define CFG_CURRENT_LIMIT  5.0f    // A (used once current sensing is enabled)
-#define CFG_VEL_LIMIT      100.0f   // rad/s
+#define CFG_VOLT_LIMIT     23.5f    // motor/driver voltage limit (safety)
+#define CFG_VOLT_ALIGN     2.0f     // voltage used during initFOC alignment
+#define CFG_CURRENT_LIMIT  4.0f     // A (used once current sensing is enabled)
+#define CFG_VEL_LIMIT      17.78f   // rad/s
+
+// Plafonds de sécurité pour les réglages runtime via série (commandes 'LC'/'LV'
+// depuis le GUI de config). Un client distant ne doit JAMAIS pouvoir demander un
+// courant/vitesse arbitraire : on borne la valeur acceptée ici.
+#define CFG_CURRENT_LIMIT_MAX  20.0f   // A — plafond dur pour 'LC'
+#define CFG_VEL_LIMIT_MAX      40.0f   // rad/s — plafond dur pour 'LV'
 
 // ---------------------------------------------------------------------------
 //  Gestion de l'énergie régénérée (résistance de freinage 2 ohms sur AUX) +
@@ -115,18 +123,34 @@
 #define CFG_BUS_SAFETY_DIV     (1000 / CFG_BUS_SAFETY_HZ)
 #define CFG_BUS_SAFETY_DT      (1.0f / CFG_BUS_SAFETY_HZ)
 
-// Limite de pente du duty frein (duty/s). Sans rampe, tout saut de Vbus
-// (franchissement de BRAKE_ON) ou de courant régénéré (le couple change de
-// signe en 1-2 cycles PID) se traduit par un saut de duty quasi instantané --
-// à-coup mécanique sur la roue. 6.0 = 0->100% en ~167ms : à resserrer si le
-// bus dépasse REGEN_START/OV_TRIP pendant un freinage franc (la rampe retarde
-// la réaction), à desserrer si le freinage reste perceptible comme un à-coup.
-#define CFG_BRAKE_RAMP         6.0f
-#define CFG_VBUS_BRAKE_ON      25.5f   // V — début de la rampe frein
-#define CFG_VBUS_BRAKE_FULL    26.5f   // V — frein à MAX_DUTY
-#define CFG_VBUS_REGEN_START   26.5f   // V — début dérating couple de freinage
-#define CFG_VBUS_REGEN_FULL    28.0f   // V — courant régen totalement coupé
-#define CFG_VBUS_OV_TRIP       29.0f   // V — faute latchée (10 ms consécutives)
+// Pente max du duty frein (duty/s). Trop lent -> le bus peut atteindre OV_TRIP
+// avant que la résistance dissipe (freinage franc = pic régen). Le duty frein
+// ne crée AUCUN couple (simple charge résistive sur le bus), donc pas de risque
+// d'à-coup mécanique à monter vite. 50 = 0->100 % en 20 ms.
+#define CFG_BRAKE_RAMP         50.0f
+#define CFG_VBUS_BRAKE_ON      24.8f   // V — début de la rampe frein
+#define CFG_VBUS_BRAKE_FULL    25.8f   // V — frein à MAX_DUTY
+
+// Dérating du couple de freinage moteur. Mesuré sur banc : la capacité de bus
+// (~1400 uF) passe de 24 à 28.5 V avec seulement ~0.4 W de régen (0.165 J en
+// 400 ms) -- autrement dit un Iq de freinage de 0.05 A suffit à faire monter le
+// bus quand l'alim ne peut pas absorber. Une plage de dérating haute ne mordait
+// donc JAMAIS (limite calculée 1.6 A vs Iq réel 0.05 A). On coupe le couple de
+// freinage bien plus tôt : à REGEN_FULL le moteur roue-libre, le bus cesse de
+// se charger. Coût : moins de frein moteur -- acceptable tant que la résistance
+// de freinage n'est pas prouvée fonctionnelle (commande série 'B').
+#define CFG_VBUS_REGEN_START   25.8f   // V — début dérating couple de freinage
+#define CFG_VBUS_REGEN_FULL    27.0f   // V — courant régen totalement coupé
+#define CFG_VBUS_OV_TRIP       29.0f   // V — faute latchée (~10 ms consécutives)
+
+// Test manuel de la résistance de freinage (commande série 'B<duty>', moteur
+// désarmé). Sert à prouver que le demi-pont AUX conduit réellement : à duty d
+// sur un bus V, l'alim doit débiter d*V/R en plus (0.25 -> 3 A / 72 W à 24 V
+// avec 2 ohms) et la résistance doit chauffer. Si rien ne bouge, les FETs AUX
+// ne sont pas pilotés (non peuplés sur le clone, driver non alimenté, ou
+// PIN_AUX_L faux) -- aucun réglage firmware ne pourra dissiper.
+#define CFG_BRAKE_TEST_MAX_DUTY 0.25f  // plafond de sécurité pour le test
+#define CFG_BRAKE_TEST_MS       2000   // durée d'une impulsion de test (ms)
 
 // Consigne de vitesse max acceptée (rad/s) : ~90 % de la vitesse à vide
 // atteignable sous CFG_VOLT_LIMIT (KV en rpm/V -> *0.10472 en (rad/s)/V).
@@ -156,11 +180,11 @@
 //  compile-time equivalent of ODrive's pre_calibrated. (Flash-runtime saving is
 //  a later phase.) Leave 0 to auto-align on each first arm.
 // ---------------------------------------------------------------------------
-#define CFG_PRECALIBRATED    0         // 1 = use the values below, skip alignment
-#define CFG_ZERO_ELEC_ANGLE  0.0000f   // motor.zero_electric_angle (rad), from initFOC
-#define CFG_SENSOR_DIRECTION 1         // +1 = CW, -1 = CCW, from initFOC
-#define CFG_PHASE_R          0.0f      // phase resistance (ohm); 0 = leave unset
-#define CFG_PHASE_L          0.0f      // phase inductance (H);   0 = leave unset
+#define CFG_PRECALIBRATED    1            // 1 = use the values below, skip alignment
+#define CFG_ZERO_ELEC_ANGLE  5.2154f      // motor.zero_electric_angle (rad), from initFOC
+#define CFG_SENSOR_DIRECTION -1           // +1 = CW, -1 = CCW, from initFOC
+#define CFG_PHASE_R          4.2093f      // phase resistance (ohm); 0 = leave unset
+#define CFG_PHASE_L          4890.65e-6f  // phase inductance (H);   0 = leave unset
 
 // ============================================================================
 //  FreeRTOS timing / priorities  (higher number = higher urgency)
@@ -201,34 +225,55 @@
 // ============================================================================
 //  Motion controller defaults (velocity / position modes over CAN)
 // ============================================================================
-// En foc_current la sortie du PID vitesse est un courant (A), plus une tension.
-// Points de départ à re-tuner sur banc.
+// En foc_current la sortie du PID vitesse est un courant (A). À re-tuner par
+// moteur. P trop élevé amplifie le bruit de mesure hall -> Iq oscille et le
+// régen des à-coups peut faire fauter le bus (observé dès P=1.0) ; monter par
+// petits pas (+0.1).
 #define CFG_VEL_P        0.5f        // A/(rad/s)
-#define CFG_VEL_I        0.001f        // A/(rad·s⁻¹·s)
-// D=0 : HallSensor::getVelocity() (Simple FOC) dérive du dernier intervalle
-// inter-front UNIQUEMENT (pas de moyenne glissante) -> avec 26pp (156
-// segments/tour) le moindre écart d'espacement mécanique entre aimants fait
-// alterner la vitesse instantanée sur-estimée/sous-estimée d'un front à
-// l'autre. Un gain D différencie ce bruit tel quel dans la commande de
-// courant -> Iq (et donc le couple) suit le même zigzag -> saccades.
-#define CFG_VEL_D        0.0001f
+// I fixe le courant de croisière (Ti=P/I). Trop faible -> stick-slip au
+// décollage (le rotor colle puis décroche). Monter par paliers si le bas régime
+// accroche, baisser si ça dépasse/oscille en régime établi.
+#define CFG_VEL_I        0.05f       // A/(rad·s⁻¹·s)
+// D dérive le bruit hall directement dans Iq -> garder très bas (le lissage
+// multi-front de HallSensorSmoothVel traite déjà ce bruit à la source).
+#define CFG_VEL_D        0.0f
+// Pente max du COURANT de sortie du PID (A/s). Une rampe large accélère aussi
+// le renversement de couple en freinage -> pic de tension bus plus rapide.
 #define CFG_VEL_RAMP     30.0f      // PID output ramp (A/s)
+// Limite d'accélération de la CONSIGNE de vitesse (rad/s²) — distincte de
+// CFG_VEL_RAMP (courant) : lisse la cible. Sans rampe, un échelon (ex. V5->V10)
+// fait plonger puis overshooter l'alim de banc (regen -> OV_TRIP). Trop rapide,
+// la rampe qui s'arrête net à la cible excite aussi un dépassement de vitesse en
+// arrivée (ring ~5 Hz) qui régénère et fait clignoter le frein = saccade.
+// 10 = 0->10 rad/s en ~1 s. Baisser (6-8) si l'arrivée reste saccadée, monter
+// pour une réponse plus vive. 0 = échelon direct.
+#define CFG_VEL_ACCEL    10.0f      // rad/s²  (0 = pas de rampe de consigne)
 #define CFG_POS_P        1.0f       // position P gain ((rad/s)/rad)
-// Redescendu de 0.15s : ce filtre compensait le bruit de mesure hall avant
-// que HallSensorSmoothVel ne le corrige à la source (moyennage multi-front,
-// voir CFG_HALL_VEL_WINDOW ci-dessous). Un Tf=0.15s ajoute ~150ms de retard
-// dans la boucle vitesse en plus de la fenêtre de 20ms -- assez pour ronger
-// la marge de phase et transformer le bruit en oscillation entretenue
-// (observé sur banc : ~5 Hz, quasi indépendant de la vitesse cible, signature
-// classique d'un cycle limite plutôt que d'un bruit de capteur). Redescendu à
-// 0.02s : lissage résiduel léger, retard total boucle ~fenêtre+Tf ~40ms.
+// Passe-bas sur la vitesse mesurée (s). Trop grand ajoute du retard de boucle
+// -> oscillation entretenue (cycle limite ~5 Hz vu à 0.15s). Le lissage
+// principal est fait par CFG_HALL_VEL_WINDOW ; ce filtre reste léger.
 #define CFG_LPF_VEL_TF   0.02f       // velocity low-pass (s)
 
-// Hall velocity averaging window (s) -- see src/HallSensorSmoothVel.h. Forces
-// Sensor::getVelocity() to span multiple hall edges per computation instead
-// of one, canceling sector-to-sector mechanical spacing error. At 26pp, edge
-// period is ~2*PI/(pole_pairs*6*vel_rad_s) -- e.g. ~8ms at 5 rad/s, so 20ms
-// spans ~2-3 edges there and more at higher speed (self-improving). Too large
-// = more feedback lag; re-tune if response feels sluggish or too small still
-// jerky.
-#define CFG_HALL_VEL_WINDOW  0.02f
+// Fenêtre de moyennage de la vitesse hall (s) -- voir src/HallSensorSmoothVel.h.
+// Force Sensor::getVelocity() à couvrir plusieurs fronts hall par calcul (annule
+// l'erreur d'espacement secteur à secteur). Période inter-front ~2π/(pp*6*vel) :
+// ~20ms à 2 rad/s, ~8ms à 5 rad/s ; 0.05s couvre ~2.5 fronts à 2 rad/s. Trop
+// grand = retard de boucle, trop petit = quantification (saccades à bas régime).
+#define CFG_HALL_VEL_WINDOW  0.05f
+
+// ---------------------------------------------------------------------------
+//  Calibration des angles de transition hall (anti-ondulation de commutation).
+//  SimpleFOC suppose des secteurs hall de 60° élec. pile ; le placement réel est
+//  irrégulier -> angle de commutation faux dans chaque secteur -> ondulation de
+//  couple à toutes les vitesses. Voir src/HallSensorSmoothVel.h.
+//  Procédure : moteur DÉSARMÉ -> commande série 'H' (spin boucle ouverte ~10s)
+//  -> copier les 6 offsets imprimés dans CFG_HALL_CAL_OFFSETS -> passer
+//  CFG_HALL_PRECALIBRATED à 1 -> rebuild. Sinon les offsets ne vivent qu'en RAM.
+// ---------------------------------------------------------------------------
+#define CFG_HALL_CAL_VOLTAGE     2.0f    // V, tension du spin boucle ouverte
+#define CFG_HALL_CAL_ELEC_SPEED  8.0f    // rad/s élec (~0.31 rad/s méca à 26pp)
+#define CFG_HALL_CAL_REVS        12      // tours élec. balayés (2 premiers ignorés)
+#define CFG_HALL_PRECALIBRATED   1       // 1 = charger CFG_HALL_CAL_OFFSETS au boot
+// Offsets mécaniques (rad) par secteur hall 0..5, produits par 'H' (direction
+// incluse). Secteurs 0..5 en deg élec : +0.92 -1.18 +0.46 +0.36 -1.33 +0.77.
+#define CFG_HALL_CAL_OFFSETS  { -0.0006175f, 0.0007926f, -0.0003101f, -0.0002395f, 0.0008929f, -0.0005184f }

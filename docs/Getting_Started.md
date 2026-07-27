@@ -142,7 +142,7 @@ A successful upload ends with something like `Programming Complete!` /
    Current sense OK -> foc_current torque control
    CAN up: node 0 @ 500000 bps
    SAFE state (disarmed). Send 'A' via serial or CAN CLOSED_LOOP state to arm.
-   Serial cmds: A arm | I idle | V<rad/s> | T<Nm> | M charac R/L | C clear | KP/KI/KD<v> vel PID | K show
+   Serial cmds: A arm | I idle | V<rad/s> | T<Nm> | M charac R/L | H hall-cal | C clear | KP/KI/KD<v> vel PID | K show
    t=... #0 mode=1 tgt=0.00 Iq=0.00 vel=0.00 pos=0.00 Vbus=... SAFE
    ```
    The status word at the end of each line is `SAFE` (never armed) → `RUN`
@@ -155,6 +155,9 @@ A successful upload ends with something like `Programming Complete!` /
    - `T0.5` → torque mode, 0.5 Nm (real current if current‑sense is active;
      q‑axis volts in the voltage fallback)
    - `M` → measure phase resistance/inductance (motor must be free)
+   - `H` → *(hall only)* calibrate the hall sector angles for smooth commutation
+     — motor must be **free and disarmed**; it spins slowly ~10 s (see
+     [Calibration.md](Calibration.md#step-3b--hall-only-calibrate-the-hall-sector-angles))
    - `I` → disarm (back to safe) &nbsp; `C` → clear a latched fault
    - `KP0.3` / `KI2` / `KD0` → live‑tune the velocity PID (Nm per rad/s);
      `K` alone re‑prints the gains currently applied
@@ -263,9 +266,7 @@ position, limits, estop, clear‑errors, and reading telemetry.
 
 If you want to use an **ESP32** instead of an Arduino Uno/Nano, the repo now
 includes [`CAN/esp32_twai_sender/esp32_twai_sender.ino`](../CAN/esp32_twai_sender/esp32_twai_sender.ino).
-This version uses the ESP32's built-in **TWAI** controller and an external CAN
 transceiver such as the **CJMCU-230**.
-
 **Important wiring note:** TWAI is only the CAN controller inside the ESP32.
 You still need a transceiver to convert the ESP32's TX/RX logic signals into
 the differential **CANH/CANL** bus.
@@ -349,6 +350,7 @@ so odrivetool and existing ODrive CAN tools work unchanged.
 | ESP32 TWAI won't send or receive | Check that the transceiver is 3.3 V compatible, TXD/RXD are wired to the correct GPIOs, and CANH/CANL are not swapped. |
 | `Vbus` reads wrong | Calibrate `CFG_VBUS_DIV` in `board_config.h` to your board's divider. |
 | Motor spins the wrong way / jitters | Encoder A/B direction; the `STM32HWEncoder` is new — verify sign vs. the old software encoder. |
+| Hall motor is rough/notchy at **all** speeds | Hall commutation ripple (60° grid assumption). Run the hall‑angle calibration — `H`, or [Calibration.md Step 3b](Calibration.md#step-3b--hall-only-calibrate-the-hall-sector-angles). Confirm first with a constant‑torque `T0.3`: if `Iq` ripples at fixed setpoint while the disarmed shaft has no strong detents, it's commutation, not the velocity PID. |
 
 ---
 
