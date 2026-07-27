@@ -62,10 +62,9 @@ browser tab has no OS serial access. Instead this app uses the browser's
 
 ## Prerequisites
 
-1. **Qt for WebAssembly**, via the Qt online installer. In the component tree
-   tick *WebAssembly (single-threaded)* and a desktop kit (MinGW 64-bit). No
-   extra modules are needed — the plots are drawn with plain `QPainter`, so
-   Qt Charts is **not** required.
+1. **Qt for WebAssembly** with the **Qt Charts** module, via the Qt online
+   installer. In the component tree tick *WebAssembly (single-threaded)*,
+   *Qt Charts* (under Additional Libraries) and a desktop kit (MinGW 64-bit).
 2. The **matching Emscripten SDK**. Each Qt version is pinned to exactly one
    emsdk version — a mismatch is the most common build failure. Read the pin
    straight out of your own install rather than guessing:
@@ -127,7 +126,7 @@ there for exactly that reason).
 
 Two things to weigh before committing:
 
-- The payload is **~13.7 MB**, dominated by `serial_plotter_wasm.wasm`, but
+- The payload is **~14 MB**, dominated by `serial_plotter_wasm.wasm`, but
   GitHub Pages serves it gzipped so the actual transfer is **~5 MB**. Fine for
   Pages (limits: 1 GB per site, 100 MB per file), though it does land in git
   history on every rebuild — consider a `gh-pages` branch or a CI build if you
@@ -144,12 +143,10 @@ lot: a default configure leaves `CMAKE_BUILD_TYPE` empty, which compiles at
 | | wasm (raw) | over the wire (gzip) |
 |---|---|---|
 | `-O0` (unoptimised default) | 21.6 MB | ~8 MB |
-| MinSizeRel + `-Oz`, no Qt Charts | **13.7 MB** | **~5 MB** |
+| MinSizeRel + `-Oz` | **~14 MB** | **~5 MB** |
 
-Plotting uses a hand-rolled `QPainter` widget ([`liveplot.cpp`](src/liveplot.cpp))
-instead of Qt Charts: for five line traces at ~10 Hz the charts module was pure
-overhead (a heavier dependency and, being a `QGraphicsView`, it also fought the
-scroll area for wheel events).
+The optimisation flags (not dropping features) are what did the work — the
+weight is the Qt runtime, not the app code.
 
 ## Developing without hardware (demo mode)
 

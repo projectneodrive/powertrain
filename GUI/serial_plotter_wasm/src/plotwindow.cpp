@@ -11,12 +11,10 @@
 #include <QCheckBox>
 #include <QKeySequence>
 #include <QLabel>
-#include <QMenu>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QToolBar>
-#include <QToolButton>
 #include <QWidget>
 
 PlotWindow::PlotWindow(double windowS, QWidget *parent) : QMainWindow(parent)
@@ -42,21 +40,18 @@ PlotWindow::PlotWindow(double windowS, QWidget *parent) : QMainWindow(parent)
     auto *toolbar = addToolBar(QStringLiteral("Main"));
     toolbar->setMovable(false);
 
-    // Pages menu (the "menu in the top bar" that switches pages).
-    auto *pagesButton = new QToolButton;
-    pagesButton->setText(QStringLiteral("☰ Pages"));
-    pagesButton->setPopupMode(QToolButton::InstantPopup);
-    auto *pagesMenu = new QMenu(pagesButton);
+    // Page selector. Deliberately NOT a QMenu/QToolButton dropdown: popup menus
+    // are unstable in Qt for WebAssembly (they crashed the page). Checkable
+    // toolbar buttons give the same top-bar navigation with no popup.
     auto *pageGroup = new QActionGroup(this);
+    pageGroup->setExclusive(true);
     for (int i = 0; i < m_pages.size(); ++i) {
-        QAction *a = pagesMenu->addAction(m_pages.at(i)->pageTitle());
+        QAction *a = toolbar->addAction(m_pages.at(i)->pageTitle());
         a->setCheckable(true);
         a->setChecked(i == 0);
         pageGroup->addAction(a);
         connect(a, &QAction::triggered, this, [this, i] { m_stack->setCurrentIndex(i); });
     }
-    pagesButton->setMenu(pagesMenu);
-    toolbar->addWidget(pagesButton);
 
     toolbar->addSeparator();
 

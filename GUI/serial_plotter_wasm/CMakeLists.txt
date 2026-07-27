@@ -11,7 +11,7 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 # reads to resolve the Qt headers (see .vscode/c_cpp_properties.json).
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Charts)
 qt_standard_project_setup()
 
 qt_add_executable(serial_plotter_wasm
@@ -28,6 +28,7 @@ qt_add_executable(serial_plotter_wasm
 
 target_link_libraries(serial_plotter_wasm PRIVATE
     Qt6::Widgets
+    Qt6::Charts
 )
 
 # Note: we intentionally do NOT set -sEXPORTED_RUNTIME_METHODS here. Qt sets it

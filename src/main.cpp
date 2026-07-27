@@ -843,6 +843,7 @@ static void handleSerial() {
             reportConfig();
             break;
           default:
+          
             Serial.print("AK ?: unknown '"); Serial.print(buf[0]);
             Serial.println("'");
             break;
