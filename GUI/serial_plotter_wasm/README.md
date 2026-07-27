@@ -62,9 +62,10 @@ browser tab has no OS serial access. Instead this app uses the browser's
 
 ## Prerequisites
 
-1. **Qt for WebAssembly** with the **Qt Charts** module, via the Qt online
-   installer. In the component tree tick *WebAssembly (single-threaded)*,
-   *Qt Charts* (under Additional Libraries) and a desktop kit (MinGW 64-bit).
+1. **Qt for WebAssembly**, via the Qt online installer. In the component tree
+   tick *WebAssembly (single-threaded)* and a desktop kit (MinGW 64-bit). No
+   extra modules are needed — the plots are drawn with plain `QPainter`, so
+   Qt Charts is **not** required.
 2. The **matching Emscripten SDK**. Each Qt version is pinned to exactly one
    emsdk version — a mismatch is the most common build failure. Read the pin
    straight out of your own install rather than guessing:
@@ -126,12 +127,29 @@ there for exactly that reason).
 
 Two things to weigh before committing:
 
-- The payload is **~21.6 MB**, dominated by `serial_plotter_wasm.wasm`. That is
-  fine for Pages (limits: 1 GB per site, 100 MB per file) but it lands in git
-  history on every rebuild. Consider a separate `gh-pages` branch, or building
-  in CI, if you expect to redeploy often.
-- First load downloads the whole `.wasm`. GitHub Pages serves it gzipped, which
-  helps considerably, but it is not instant on a slow link.
+- The payload is **~13.7 MB**, dominated by `serial_plotter_wasm.wasm`, but
+  GitHub Pages serves it gzipped so the actual transfer is **~5 MB**. Fine for
+  Pages (limits: 1 GB per site, 100 MB per file), though it does land in git
+  history on every rebuild — consider a `gh-pages` branch or a CI build if you
+  redeploy often.
+- First load downloads the whole `.wasm`; after that the browser caches it.
+
+## Size / performance
+
+The WASM is built **MinSizeRel** with a link-time **`-Oz`** and the smaller
+**emmalloc** allocator (see [`CMakeLists.txt`](CMakeLists.txt)). This matters a
+lot: a default configure leaves `CMAKE_BUILD_TYPE` empty, which compiles at
+`-O0` — that produced a 21.6 MB, sluggish binary. The current settings give:
+
+| | wasm (raw) | over the wire (gzip) |
+|---|---|---|
+| `-O0` (unoptimised default) | 21.6 MB | ~8 MB |
+| MinSizeRel + `-Oz`, no Qt Charts | **13.7 MB** | **~5 MB** |
+
+Plotting uses a hand-rolled `QPainter` widget ([`liveplot.cpp`](src/liveplot.cpp))
+instead of Qt Charts: for five line traces at ~10 Hz the charts module was pure
+overhead (a heavier dependency and, being a `QGraphicsView`, it also fought the
+scroll area for wheel events).
 
 ## Developing without hardware (demo mode)
 
@@ -249,8 +267,8 @@ buttons to drive the firmware, and **Save CSV** to download the captured log.
   ever arrives. The bridge therefore calls `EMSCRIPTEN_KEEPALIVE` exports and
   moves bytes through `HEAPU8` instead.
 - Single-threaded Qt WASM build. The firmware emits ~10 telemetry lines/s, so
-  Qt Charts keeps up comfortably; the heavy ring-buffer/downsampling tricks from
-  the Python version are unnecessary here.
+  the QPainter plots keep up trivially; the heavy ring-buffer/downsampling
+  tricks from the Python version are unnecessary here.
 - Reconnecting after unplugging the board may require re-picking the port
   (the browser drops the handle when the device disappears).
 - The same source also compiles as a **desktop** Qt app (for UI work); on

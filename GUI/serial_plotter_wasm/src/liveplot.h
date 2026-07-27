@@ -1,7 +1,10 @@
 // Reusable stack of five scrolling charts (Target/Iq/Vel/Pos/Vbus), used by
-// both the Live Plotter page and the PID Tuner page. Is itself a QScrollArea
-// so the charts stay readable (fixed per-chart minimum height) and scroll when
-// the viewport is short.
+// both the Live Plotter page and the PID Tuner page.
+//
+// Drawn with plain QPainter rather than Qt Charts: for five line traces at
+// ~10 Hz the charts module is pure overhead (megabytes of WASM, heavier
+// rendering) and, being a QGraphicsView, it also swallowed wheel events. Plain
+// QWidgets keep the binary small and let the wheel reach the scroll area.
 #pragma once
 
 #include <QScrollArea>
@@ -10,11 +13,7 @@
 
 #include "channels.h"
 
-QT_BEGIN_NAMESPACE
-class QChart;
-class QLineSeries;
-class QValueAxis;
-QT_END_NAMESPACE
+class PlotStripe;
 
 class LivePlot : public QScrollArea
 {
@@ -29,21 +28,15 @@ public:
     void setWindow(double seconds);
     double window() const { return m_windowS; }
 
-private:
-    void redraw();
-
     struct Sample {
         double t;                                  // seconds relative to t0
         std::array<double, kNumChannels> v;
     };
 
+private:
     double m_windowS = 20.0;
     bool m_haveT0 = false;
     double m_t0 = 0.0;
     std::deque<Sample> m_samples;
-
-    std::array<QChart *, kNumChannels> m_charts{};
-    std::array<QLineSeries *, kNumChannels> m_series{};
-    std::array<QValueAxis *, kNumChannels> m_axX{};
-    std::array<QValueAxis *, kNumChannels> m_axY{};
+    std::array<PlotStripe *, kNumChannels> m_stripes{};
 };

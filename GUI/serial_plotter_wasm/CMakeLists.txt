@@ -11,7 +11,7 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 # reads to resolve the Qt headers (see .vscode/c_cpp_properties.json).
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Charts)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 qt_standard_project_setup()
 
 qt_add_executable(serial_plotter_wasm
@@ -28,7 +28,6 @@ qt_add_executable(serial_plotter_wasm
 
 target_link_libraries(serial_plotter_wasm PRIVATE
     Qt6::Widgets
-    Qt6::Charts
 )
 
 # Note: we intentionally do NOT set -sEXPORTED_RUNTIME_METHODS here. Qt sets it
@@ -37,6 +36,14 @@ target_link_libraries(serial_plotter_wasm PRIVATE
 # and talks to C++ through EMSCRIPTEN_KEEPALIVE exports + HEAPU8 instead.
 
 if(EMSCRIPTEN)
+    # Squeeze the WASM further than MinSizeRel's -Os: link-time -Oz reruns
+    # Binaryen over the whole module (Qt included), and emmalloc is a smaller
+    # allocator than the default dlmalloc.
+    target_link_options(serial_plotter_wasm PRIVATE
+        "-Oz"
+        "-sMALLOC=emmalloc"
+    )
+
     # Qt emits <target>.html; GitHub Pages needs index.html. Copying it as a
     # post-build step keeps the two in lockstep -- renaming by hand leaves a
     # stale loader behind on the next rebuild.

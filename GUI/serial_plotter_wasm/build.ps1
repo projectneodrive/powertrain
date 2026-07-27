@@ -81,9 +81,12 @@ if ($Clean -and (Test-Path $buildDir)) {
 }
 
 # Configure only when needed; a stale cache pins the old generator.
+# Without an explicit build type, single-config generators compile at -O0 --
+# for the WASM target that alone is the difference between a ~22 MB and a
+# ~10 MB binary. MinSizeRel (-Os) is what we want for the page.
 if (-not (Test-Path (Join-Path $buildDir 'CMakeCache.txt'))) {
     Write-Host "Configuring ($Target)..." -ForegroundColor Cyan
-    & $qtCMake -S . -B $buildDir -G Ninja
+    & $qtCMake -S . -B $buildDir -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel
     if ($LASTEXITCODE -ne 0) { throw "Configure failed." }
 }
 
