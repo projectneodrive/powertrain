@@ -683,6 +683,8 @@ serial_plotter_wasm_autogen/timestamp: \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop/CMakeFiles/4.2.1/CMakeSystem.cmake \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop/serial_plotter_wasm_autogen/moc_predefs.h \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/channels.h \
+	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/cheatsheetpage.cpp \
+	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/cheatsheetpage.h \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/configpage.cpp \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/configpage.h \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/demosource.cpp \

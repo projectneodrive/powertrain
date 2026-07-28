@@ -5,10 +5,13 @@
 #include <QtCharts/QLineSeries>
 #include <QtCharts/QValueAxis>
 
+#include <QFont>
 #include <QLabel>
+#include <QMargins>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScrollBar>
+#include <QSplitter>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -20,14 +23,18 @@
 namespace {
 
 constexpr double kMaxHistoryS = 300.0;   // hard cap on retained samples
-// Deliberately small so all five charts fit a normal window; the QScrollArea
-// only scrolls once the viewport drops below 5x this.
-constexpr int kMinChartHeight = 96;
 constexpr int kHeaderHeight = 20;
+// A chart can be dragged this small (leaves room for the axis labels) -- the
+// low minimum is what gives the splitter slack to actually resize.
+constexpr int kMinChartHeight = 80;
+// Default per-chart height. The splitter's total is set to N x this so there is
+// always give to trade between neighbours; when it exceeds the viewport the
+// area scrolls (so all charts fit a tall screen and scroll on a short one).
+constexpr int kNaturalChartHeight = 160;
 
-// QChartView derives from QGraphicsView, which accepts wheel events even when
-// it has nothing of its own to scroll -- that stops the enclosing QScrollArea
-// from seeing them. We forward to the parent scroll area's scrollbar instead.
+// QChartView is a QGraphicsView, which swallows wheel events even with nothing
+// to scroll. Forward them to the enclosing QScrollArea so the chart column
+// scrolls as expected.
 class ChartView : public QChartView
 {
 public:
@@ -60,10 +67,19 @@ LivePlot::LivePlot(QWidget *parent) : QScrollArea(parent)
     setFrameShape(QFrame::NoFrame);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
-    auto *container = new QWidget;
-    m_rowLayout = new QVBoxLayout(container);
-    m_rowLayout->setContentsMargins(0, 0, 0, 0);
-    m_rowLayout->setSpacing(3);
+    // A vertical splitter makes each graph individually resizable: drag the
+    // handle between two charts to change their heights. It still scrolls when
+    // the viewport is shorter than the charts' combined minimum.
+    m_splitter = new QSplitter(Qt::Vertical);
+    m_splitter->setChildrenCollapsible(false);
+    m_splitter->setHandleWidth(8);
+    // Visible grab bar between charts so the drag target is obvious.
+    m_splitter->setStyleSheet(QStringLiteral(
+        "QSplitter::handle:vertical{background:#c8c8c8;margin:1px 0;}"
+        "QSplitter::handle:vertical:hover{background:#3b82f6;}"));
+    // Natural total height taller than a typical viewport -> the area scrolls
+    // and, crucially, there's slack for the handles to redistribute.
+    m_splitter->setMinimumHeight((kNaturalChartHeight + kHeaderHeight) * kNumChannels);
 
     for (int ch = 0; ch < kNumChannels; ++ch) {
         auto *series = new QLineSeries;
@@ -72,18 +88,31 @@ LivePlot::LivePlot(QWidget *parent) : QScrollArea(parent)
         auto *chart = new QChart;
         chart->legend()->hide();
         chart->addSeries(series);
-        chart->setMargins(QMargins(2, 1, 6, 1));
+        // Axis tick labels are drawn INSIDE these margins, so the left/bottom
+        // must be wide enough or the scale gets clipped (the original bug). We
+        // set them explicitly rather than trusting auto-sizing.
+        chart->setMargins(QMargins(48, 3, 10, 22));
+
+        QFont labelFont;
+        labelFont.setPointSize(8);
 
         auto *axX = new QValueAxis;
         axX->setRange(0.0, m_windowS);
         axX->setLabelFormat(QStringLiteral("%.0f"));
+        axX->setLabelsFont(labelFont);
         auto *axY = new QValueAxis;
         axY->setRange(-1.0, 1.0);
+        axY->setTickCount(3);                 // min / mid / max -- compact
+        axY->setLabelFormat(QStringLiteral("%.3g"));
+        axY->setLabelsFont(labelFont);
 
         chart->addAxis(axX, Qt::AlignBottom);
         chart->addAxis(axY, Qt::AlignLeft);
         series->attachAxis(axX);
         series->attachAxis(axY);
+        // Time labels on every chart (so the scale is always visible regardless
+        // of drag-reorder), not just the bottom one.
+        axX->setLabelsVisible(true);
 
         auto *view = new ChartView(chart);
         view->setRenderHint(QPainter::Antialiasing, false);
@@ -110,7 +139,7 @@ LivePlot::LivePlot(QWidget *parent) : QScrollArea(parent)
         rowVLayout->addWidget(view, 1);
         rowWidget->setMinimumHeight(kMinChartHeight + kHeaderHeight);
 
-        m_rowLayout->addWidget(rowWidget, 1);
+        m_splitter->addWidget(rowWidget);
 
         m_series[ch] = series;
         m_axX[ch] = axX;
@@ -118,8 +147,7 @@ LivePlot::LivePlot(QWidget *parent) : QScrollArea(parent)
         m_rows.push_back({rowWidget, header, ch});
     }
 
-    setWidget(container);
-    refreshBottomAxis();
+    setWidget(m_splitter);
 }
 
 int LivePlot::rowIndexOfHeader(const QObject *header) const
@@ -128,17 +156,6 @@ int LivePlot::rowIndexOfHeader(const QObject *header) const
         if (m_rows[i].header == header)
             return int(i);
     return -1;
-}
-
-void LivePlot::refreshBottomAxis()
-{
-    // Only the bottom-most chart shows the time axis labels/title.
-    for (size_t i = 0; i < m_rows.size(); ++i) {
-        const bool bottom = (i == m_rows.size() - 1);
-        QValueAxis *axX = m_axX[m_rows[i].channel];
-        axX->setLabelsVisible(bottom);
-        axX->setTitleText(bottom ? QStringLiteral("Time [s]") : QString());
-    }
 }
 
 void LivePlot::moveRow(int from, int to)
@@ -151,12 +168,8 @@ void LivePlot::moveRow(int from, int to)
     m_rows.erase(m_rows.begin() + from);
     m_rows.insert(m_rows.begin() + to, moved);
 
-    for (const Row &r : m_rows)
-        m_rowLayout->removeWidget(r.container);
-    for (const Row &r : m_rows)
-        m_rowLayout->addWidget(r.container, 1);
-
-    refreshBottomAxis();
+    // insertWidget on an existing child moves it to the new position.
+    m_splitter->insertWidget(to, moved.container);
 }
 
 bool LivePlot::eventFilter(QObject *obj, QEvent *ev)

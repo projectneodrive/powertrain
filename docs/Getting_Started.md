@@ -167,6 +167,10 @@ A successful upload ends with something like `Programming Complete!` /
 > `board_config.h`, and the board boots pre‑calibrated (arms without the
 > alignment sweep, so the rotor needn't be free).
 
+> **Prefer a GUI?** Instead of the raw serial monitor you can drive all of this
+> from the **[web GUI](GUI.md)** — a browser plotter + PID tuner + config editor
+> that connects to the board over USB (Chrome/Edge). See **[GUI.md](GUI.md)**.
+
 > The steady `#N` counter proves the real‑time scheduler is healthy — it keeps a
 > fixed 10 Hz cadence even while the motor spins fast (this is the bug we fixed
 > by moving the encoder onto a hardware timer).
@@ -355,6 +359,8 @@ so odrivetool and existing ODrive CAN tools work unchanged.
 ---
 
 ### See also
+- **[GUI.md](GUI.md)** — the browser-based live plotter, PID tuner and config
+  editor that drives the board over USB (no install; Chrome/Edge).
 - **[Calibration.md](Calibration.md)** — commissioning a new motor (find & save
   `R`/`L`, sensor offset/direction, pre‑calibrated boot).
 - Firmware source: [`src/main.cpp`](../src/main.cpp),

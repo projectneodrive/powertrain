@@ -16,8 +16,8 @@
 QT_BEGIN_NAMESPACE
 class QChart;
 class QLineSeries;
+class QSplitter;
 class QValueAxis;
-class QVBoxLayout;
 QT_END_NAMESPACE
 
 class LivePlot : public QScrollArea
@@ -39,7 +39,6 @@ protected:
 private:
     void redraw();
     void moveRow(int from, int to);
-    void refreshBottomAxis();
     int rowIndexOfHeader(const QObject *header) const;
 
     struct Sample {
@@ -57,10 +56,10 @@ private:
     double m_t0 = 0.0;
     std::deque<Sample> m_samples;
 
-    QVBoxLayout *m_rowLayout = nullptr;
-    std::vector<Row> m_rows;                       // in visual (top-to-bottom) order
+    QSplitter *m_splitter = nullptr;               // holds the resizable rows
+    std::vector<Row> m_rows;                        // in visual (top-to-bottom) order
 
-    // Chart objects indexed by channel (fixed; reordering only moves widgets).
+    // Series/axes indexed by channel (fixed; reordering only moves widgets).
     std::array<QLineSeries *, kNumChannels> m_series{};
     std::array<QValueAxis *, kNumChannels> m_axX{};
     std::array<QValueAxis *, kNumChannels> m_axY{};

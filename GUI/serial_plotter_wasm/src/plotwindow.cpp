@@ -1,4 +1,5 @@
 #include "plotwindow.h"
+#include "cheatsheetpage.h"
 #include "configpage.h"
 #include "demosource.h"
 #include "mainview.h"
@@ -27,8 +28,10 @@ PlotWindow::PlotWindow(double windowS, QWidget *parent) : QMainWindow(parent)
     setCentralWidget(m_stack);
     m_mainView = new MainView(windowS);
     m_configPage = new ConfigPage();
-    m_stack->addWidget(m_mainView);     // index 0
-    m_stack->addWidget(m_configPage);   // index 1
+    m_cheatPage = new CheatSheetPage();
+    m_stack->addWidget(m_mainView);
+    m_stack->addWidget(m_configPage);
+    m_stack->addWidget(m_cheatPage);
 
     // ----------------------------------------------------------- toolbar --
     auto *toolbar = addToolBar(QStringLiteral("Main"));
@@ -47,10 +50,12 @@ PlotWindow::PlotWindow(double windowS, QWidget *parent) : QMainWindow(parent)
     QAction *plotterAct = addPage(QStringLiteral("Live Plotter"));
     QAction *tunerAct = addPage(QStringLiteral("PID Tuner"));
     QAction *configAct = addPage(QStringLiteral("Motor Config"));
+    QAction *cmdAct = addPage(QStringLiteral("Commands"));
     plotterAct->setChecked(true);
     connect(plotterAct, &QAction::triggered, this, [this] { showMainPanel(MainView::PlotterPanel); });
     connect(tunerAct, &QAction::triggered, this, [this] { showMainPanel(MainView::TunerPanel); });
-    connect(configAct, &QAction::triggered, this, [this] { showConfig(); });
+    connect(configAct, &QAction::triggered, this, [this] { showPage(m_configPage); });
+    connect(cmdAct, &QAction::triggered, this, [this] { showPage(m_cheatPage); });
 
     toolbar->addSeparator();
 
@@ -100,10 +105,10 @@ void PlotWindow::showMainPanel(int panel)
     m_mainView->setSidePanelVisible(m_togglePanelAction->isChecked());
 }
 
-void PlotWindow::showConfig()
+void PlotWindow::showPage(QWidget *page)
 {
-    m_stack->setCurrentWidget(m_configPage);
-    m_togglePanelAction->setEnabled(false);   // config has no side panel
+    m_stack->setCurrentWidget(page);
+    m_togglePanelAction->setEnabled(false);   // full-view pages have no side panel
 }
 
 void PlotWindow::enableDemo(bool on)

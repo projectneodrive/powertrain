@@ -23,3 +23,12 @@ qt_add_executable(liveplot_test
 )
 target_include_directories(liveplot_test PRIVATE ../src)
 target_link_libraries(liveplot_test PRIVATE Qt6::Widgets Qt6::Charts)
+
+qt_add_executable(config_test
+    config_test.cpp
+    ../src/configpage.cpp
+    ../src/telemetryhub.cpp
+    ../src/serialbridge.cpp
+)
+target_include_directories(config_test PRIVATE ../src)
+target_link_libraries(config_test PRIVATE Qt6::Widgets)

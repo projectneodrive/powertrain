@@ -20,6 +20,9 @@ class ConfigPage : public QWidget
 public:
     explicit ConfigPage(QWidget *parent = nullptr);
 
+protected:
+    void changeEvent(QEvent *event) override;   // re-tint on light/dark switch
+
 private slots:
     void onReadClicked();
     void onApplyClicked();
@@ -37,6 +40,7 @@ private:
     };
 
     void setStatus(const QString &text);
+    void applyReadOnlyTint();
 
     QTableWidget *m_table = nullptr;
     QLabel *m_statusLabel = nullptr;

@@ -23,6 +23,7 @@ qt_add_executable(serial_plotter_wasm
     src/liveplot.cpp
     src/mainview.cpp
     src/configpage.cpp
+    src/cheatsheetpage.cpp
 )
 
 target_link_libraries(serial_plotter_wasm PRIVATE

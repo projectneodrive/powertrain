@@ -3,8 +3,11 @@
 #include "telemetryhub.h"
 
 #include <QAbstractItemView>
+#include <QBrush>
 #include <QColor>
+#include <QEvent>
 #include <QHBoxLayout>
+#include <QPalette>
 #include <QHeaderView>
 #include <QLabel>
 #include <QPushButton>
@@ -71,18 +74,15 @@ ConfigPage::ConfigPage(QWidget *parent) : QWidget(parent)
         m_table->setItem(r, ColParam, nameItem);
 
         auto *valueItem = new QTableWidgetItem(QStringLiteral("—"));
-        if (p.cmdPrefix) {
-            valueItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsEditable);
-        } else {
-            valueItem->setFlags(Qt::ItemIsEnabled);
-            valueItem->setBackground(QColor(0, 0, 0, 20));
-        }
+        valueItem->setFlags(p.cmdPrefix ? (Qt::ItemIsEnabled | Qt::ItemIsEditable)
+                                        : Qt::ItemIsEnabled);
         m_table->setItem(r, ColValue, valueItem);
 
         auto *unitItem = new QTableWidgetItem(QString::fromUtf8(p.unit));
         unitItem->setFlags(Qt::ItemIsEnabled);
         m_table->setItem(r, ColUnit, unitItem);
     }
+    applyReadOnlyTint();
     layout->addWidget(m_table, 1);
 
     m_statusLabel = new QLabel(QStringLiteral("Not read yet."));
@@ -166,4 +166,29 @@ void ConfigPage::onApplyClicked()
 void ConfigPage::setStatus(const QString &text)
 {
     m_statusLabel->setText(text);
+}
+
+void ConfigPage::applyReadOnlyTint()
+{
+    // A fixed near-transparent black is invisible in dark mode. Derive the tint
+    // from the current palette so read-only rows stand out in both themes.
+    const QColor base = palette().color(QPalette::Base);
+    const bool dark = base.lightness() < 128;
+    const QColor tint = dark ? QColor(255, 255, 255, 34) : QColor(0, 0, 0, 24);
+    const QBrush brush(tint);
+
+    for (int r = 0; r < m_params.size(); ++r) {
+        if (m_params.at(r).cmdPrefix)     // writable row -> no tint
+            continue;
+        for (int c = 0; c < m_table->columnCount(); ++c)
+            if (QTableWidgetItem *it = m_table->item(r, c))
+                it->setBackground(brush);
+    }
+}
+
+void ConfigPage::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+    if (event->type() == QEvent::PaletteChange && m_table)
+        applyReadOnlyTint();
 }

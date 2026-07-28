@@ -17,6 +17,7 @@ class QSpinBox;
 class QStackedWidget;
 QT_END_NAMESPACE
 
+class CheatSheetPage;
 class ConfigPage;
 class DemoSource;
 class MainView;
@@ -38,11 +39,12 @@ private slots:
 
 private:
     void showMainPanel(int panel);   // MainView::Panel
-    void showConfig();
+    void showPage(QWidget *page);    // a full-view page (Config / Commands)
 
     QStackedWidget *m_stack = nullptr;
     MainView *m_mainView = nullptr;
     ConfigPage *m_configPage = nullptr;
+    CheatSheetPage *m_cheatPage = nullptr;
     DemoSource *m_demo = nullptr;
 
     QSpinBox *m_baudSpin = nullptr;

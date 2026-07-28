@@ -30,6 +30,8 @@ Graph behaviour:
   window, and the area only scrolls once it gets too short.
 - **Drag a chart's header** (the `⠿ Name` strip) up or down to reorder the
   charts.
+- **Resize** a chart by dragging the divider between two charts (they sit in a
+  vertical splitter).
 - The graphs **clear automatically on each new connection**, and there's a
   Clear button on both the Plotter and Tuner panels.
 - **Hide panel** (Ctrl+B) collapses the left panel for full-width plots.
