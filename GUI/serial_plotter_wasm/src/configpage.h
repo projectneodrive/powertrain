@@ -7,21 +7,18 @@
 #include <QHash>
 #include <QString>
 #include <QVector>
-
-#include "apppage.h"
+#include <QWidget>
 
 QT_BEGIN_NAMESPACE
 class QLabel;
 class QTableWidget;
 QT_END_NAMESPACE
 
-class ConfigPage : public AppPage
+class ConfigPage : public QWidget
 {
     Q_OBJECT
 public:
     explicit ConfigPage(QWidget *parent = nullptr);
-
-    QString pageTitle() const override { return QStringLiteral("Motor Config"); }
 
 private slots:
     void onReadClicked();

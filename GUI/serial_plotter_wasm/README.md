@@ -11,18 +11,28 @@ the raw serial monitor, sends commands, and can export the log to CSV.
 
 ## Pages
 
-The top toolbar has a **☰ Pages** menu that switches the central view between
-three pages; the USB connection, telemetry stream and logs are shared across
-all of them (one connection, opened once).
+Three toolbar buttons switch what you see; the USB connection, telemetry stream
+and log are shared throughout (one connection, opened once).
 
-| Page | What it does |
-|------|--------------|
-| **Live Plotter** | The original plotter: five scrolling charts, serial command console (`A/I/M/C`, `T`, `V`, `KP/KI/KD`, …), status, log, CSV export. |
-| **Motor Config** | A table of motor parameters. **Read from board (Q)** pulls the live values; the writable rows (current limit, velocity limit, position gain, velocity PID) can be edited and pushed back with **Apply changes**. Hardware constants (pole pairs, KV, phase R/L, …) are shown read-only. |
-| **PID Tuner** | Live closed-loop control: arm/idle/clear, pick Velocity/Torque/Position mode, push a setpoint, and edit KP/KI/KD — all while watching the response on a LivePlot with the firmware log beneath. |
+| Button | What it does |
+|--------|--------------|
+| **Live Plotter** | Serial command console (`A/I/M/C`, `T`, `V`, `KP/KI/KD`, `Q`, …), time-window control, CSV export. |
+| **PID Tuner** | Live closed-loop control: arm/idle, clear errors, pick Velocity/Torque/Position mode, push a setpoint, edit KP/KI/KD, and a Clear-graphs button. |
+| **Motor Config** | A table of motor parameters. **Read from board (Q)** pulls the live values; writable rows (current/velocity limit, position gain, velocity PID) can be edited and pushed back with **Apply changes**. Hardware constants (pole pairs, KV, phase R/L, …) are read-only. |
 
-The **Hide panel** toolbar button (Ctrl+B) collapses the side panel of the
-current page to give the plots full width.
+**Live Plotter and PID Tuner share the same graphs and log** — switching between
+them only swaps the left control panel, so the plots keep running underneath.
+Motor Config replaces the whole view.
+
+Graph behaviour:
+
+- The five charts are **compact**: they share the height so all fit a normal
+  window, and the area only scrolls once it gets too short.
+- **Drag a chart's header** (the `⠿ Name` strip) up or down to reorder the
+  charts.
+- The graphs **clear automatically on each new connection**, and there's a
+  Clear button on both the Plotter and Tuner panels.
+- **Hide panel** (Ctrl+B) collapses the left panel for full-width plots.
 
 ### Firmware serial protocol used by the pages
 

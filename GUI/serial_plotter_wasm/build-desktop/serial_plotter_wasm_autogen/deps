@@ -105,7 +105,6 @@ serial_plotter_wasm_autogen/timestamp: \
 	C:/Program\ Files/CMake/share/cmake-4.2/Modules/Platform/Windows.cmake \
 	C:/Program\ Files/CMake/share/cmake-4.2/Modules/Platform/WindowsPaths.cmake \
 	C:/Qt/6.8.3/mingw_64/include/QtCore/QHash \
-	C:/Qt/6.8.3/mingw_64/include/QtCore/QList \
 	C:/Qt/6.8.3/mingw_64/include/QtCore/QObject \
 	C:/Qt/6.8.3/mingw_64/include/QtCore/QString \
 	C:/Qt/6.8.3/mingw_64/include/QtCore/QTimer \
@@ -683,7 +682,6 @@ serial_plotter_wasm_autogen/timestamp: \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop/CMakeFiles/4.2.1/CMakeRCCompiler.cmake \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop/CMakeFiles/4.2.1/CMakeSystem.cmake \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop/serial_plotter_wasm_autogen/moc_predefs.h \
-	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/apppage.h \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/channels.h \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/configpage.cpp \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/configpage.h \
@@ -692,10 +690,8 @@ serial_plotter_wasm_autogen/timestamp: \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/liveplot.cpp \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/liveplot.h \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/main.cpp \
-	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/pidtunerpage.cpp \
-	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/pidtunerpage.h \
-	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/plotterpage.cpp \
-	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/plotterpage.h \
+	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/mainview.cpp \
+	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/mainview.h \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/plotwindow.cpp \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/plotwindow.h \
 	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/serialbridge.cpp \

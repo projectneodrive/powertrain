@@ -1,6 +1,5 @@
 C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop/serial_plotter_wasm_autogen/UVLADIE3JM/moc_plotwindow.cpp: C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/src/plotwindow.h \
   C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop/serial_plotter_wasm_autogen/moc_predefs.h \
-  C:/Qt/6.8.3/mingw_64/include/QtCore/QList \
   C:/Qt/6.8.3/mingw_64/include/QtCore/q20functional.h \
   C:/Qt/6.8.3/mingw_64/include/QtCore/q20iterator.h \
   C:/Qt/6.8.3/mingw_64/include/QtCore/q20memory.h \

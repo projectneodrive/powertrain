@@ -1,12 +1,15 @@
-// Reusable stack of five scrolling charts (Target/Iq/Vel/Pos/Vbus), used by
-// both the Live Plotter page and the PID Tuner page. Is itself a QScrollArea
-// so the charts stay readable (fixed per-chart minimum height) and scroll when
-// the viewport is short.
+// Reusable stack of five scrolling charts (Target/Iq/Vel/Pos/Vbus).
+//
+// Layout: compact by design -- the charts share the available height and all
+// five fit on screen when the window is reasonably tall; only when the viewport
+// gets short does the QScrollArea start scrolling. Each chart has a small
+// header that doubles as a drag handle to reorder the charts.
 #pragma once
 
 #include <QScrollArea>
 #include <array>
 #include <deque>
+#include <vector>
 
 #include "channels.h"
 
@@ -14,6 +17,7 @@ QT_BEGIN_NAMESPACE
 class QChart;
 class QLineSeries;
 class QValueAxis;
+class QVBoxLayout;
 QT_END_NAMESPACE
 
 class LivePlot : public QScrollArea
@@ -29,12 +33,23 @@ public:
     void setWindow(double seconds);
     double window() const { return m_windowS; }
 
+protected:
+    bool eventFilter(QObject *obj, QEvent *ev) override;
+
 private:
     void redraw();
+    void moveRow(int from, int to);
+    void refreshBottomAxis();
+    int rowIndexOfHeader(const QObject *header) const;
 
     struct Sample {
         double t;                                  // seconds relative to t0
         std::array<double, kNumChannels> v;
+    };
+    struct Row {
+        QWidget *container;
+        QWidget *header;
+        int channel;                               // which channel it displays
     };
 
     double m_windowS = 20.0;
@@ -42,8 +57,16 @@ private:
     double m_t0 = 0.0;
     std::deque<Sample> m_samples;
 
-    std::array<QChart *, kNumChannels> m_charts{};
+    QVBoxLayout *m_rowLayout = nullptr;
+    std::vector<Row> m_rows;                       // in visual (top-to-bottom) order
+
+    // Chart objects indexed by channel (fixed; reordering only moves widgets).
     std::array<QLineSeries *, kNumChannels> m_series{};
     std::array<QValueAxis *, kNumChannels> m_axX{};
     std::array<QValueAxis *, kNumChannels> m_axY{};
+
+    // Drag-reorder state.
+    int m_dragRow = -1;
+    bool m_dragging = false;
+    int m_pressY = 0;
 };

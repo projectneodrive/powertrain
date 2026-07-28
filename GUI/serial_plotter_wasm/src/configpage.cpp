@@ -18,7 +18,7 @@ namespace {
 enum Column { ColParam = 0, ColValue = 1, ColUnit = 2, ColCount = 3 };
 }
 
-ConfigPage::ConfigPage(QWidget *parent) : AppPage(parent)
+ConfigPage::ConfigPage(QWidget *parent) : QWidget(parent)
 {
     // key                label                 unit        cmd    decimals
     m_params = {

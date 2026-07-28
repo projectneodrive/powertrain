@@ -1,10 +1,11 @@
-// Application shell: a top toolbar (pages menu, global USB connection, panel
-// toggle, connection status) over a QStackedWidget holding the three pages.
-// Serial I/O and telemetry are global (SerialBridge / TelemetryHub singletons),
-// so every page shares one connection.
+// Application shell: a top toolbar (page buttons, global USB connection, panel
+// toggle, connection status) over a QStackedWidget with two entries -- the
+// combined plotter/tuner MainView and the Motor Config page.
+//
+// The Live Plotter and PID Tuner buttons both show the MainView and only swap
+// its left control panel; the Motor Config button swaps the whole central view.
 #pragma once
 
-#include <QList>
 #include <QMainWindow>
 
 QT_BEGIN_NAMESPACE
@@ -16,8 +17,9 @@ class QSpinBox;
 class QStackedWidget;
 QT_END_NAMESPACE
 
-class AppPage;
+class ConfigPage;
 class DemoSource;
+class MainView;
 
 class PlotWindow : public QMainWindow
 {
@@ -33,11 +35,14 @@ private slots:
     void onDemoToggled(bool on);
     void onStatusChanged(bool connected, const QString &message);
     void onTogglePanel(bool visible);
-    void onPageChanged(int index);
 
 private:
+    void showMainPanel(int panel);   // MainView::Panel
+    void showConfig();
+
     QStackedWidget *m_stack = nullptr;
-    QList<AppPage *> m_pages;
+    MainView *m_mainView = nullptr;
+    ConfigPage *m_configPage = nullptr;
     DemoSource *m_demo = nullptr;
 
     QSpinBox *m_baudSpin = nullptr;

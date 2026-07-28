@@ -46,9 +46,7 @@ static constexpr auto qt_meta_stringdata_ZN10PlotWindowE = QtMocHelpers::stringD
     "connected",
     "message",
     "onTogglePanel",
-    "visible",
-    "onPageChanged",
-    "index"
+    "visible"
 );
 #else  // !QT_MOC_HAS_STRINGDATA
 #error "qtmochelpers.h not found or too old."
@@ -60,7 +58,7 @@ Q_CONSTINIT static const uint qt_meta_data_ZN10PlotWindowE[] = {
       12,       // revision
        0,       // classname
        0,    0, // classinfo
-       5,   14, // methods
+       4,   14, // methods
        0,    0, // properties
        0,    0, // enums/sets
        0,    0, // constructors
@@ -68,18 +66,16 @@ Q_CONSTINIT static const uint qt_meta_data_ZN10PlotWindowE[] = {
        0,       // signalCount
 
  // slots: name, argc, parameters, tag, flags, initial metatype offsets
-       1,    0,   44,    2, 0x08,    1 /* Private */,
-       3,    1,   45,    2, 0x08,    2 /* Private */,
-       5,    2,   48,    2, 0x08,    4 /* Private */,
-       8,    1,   53,    2, 0x08,    7 /* Private */,
-      10,    1,   56,    2, 0x08,    9 /* Private */,
+       1,    0,   38,    2, 0x08,    1 /* Private */,
+       3,    1,   39,    2, 0x08,    2 /* Private */,
+       5,    2,   42,    2, 0x08,    4 /* Private */,
+       8,    1,   47,    2, 0x08,    7 /* Private */,
 
  // slots: parameters
     QMetaType::Void,
     QMetaType::Void, QMetaType::Bool,    4,
     QMetaType::Void, QMetaType::Bool, QMetaType::QString,    6,    7,
     QMetaType::Void, QMetaType::Bool,    9,
-    QMetaType::Void, QMetaType::Int,   11,
 
        0        // eod
 };
@@ -104,10 +100,7 @@ Q_CONSTINIT const QMetaObject PlotWindow::staticMetaObject = { {
         QtPrivate::TypeAndForceComplete<const QString &, std::false_type>,
         // method 'onTogglePanel'
         QtPrivate::TypeAndForceComplete<void, std::false_type>,
-        QtPrivate::TypeAndForceComplete<bool, std::false_type>,
-        // method 'onPageChanged'
-        QtPrivate::TypeAndForceComplete<void, std::false_type>,
-        QtPrivate::TypeAndForceComplete<int, std::false_type>
+        QtPrivate::TypeAndForceComplete<bool, std::false_type>
     >,
     nullptr
 } };
@@ -121,7 +114,6 @@ void PlotWindow::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id, 
         case 1: _t->onDemoToggled((*reinterpret_cast< std::add_pointer_t<bool>>(_a[1]))); break;
         case 2: _t->onStatusChanged((*reinterpret_cast< std::add_pointer_t<bool>>(_a[1])),(*reinterpret_cast< std::add_pointer_t<QString>>(_a[2]))); break;
         case 3: _t->onTogglePanel((*reinterpret_cast< std::add_pointer_t<bool>>(_a[1]))); break;
-        case 4: _t->onPageChanged((*reinterpret_cast< std::add_pointer_t<int>>(_a[1]))); break;
         default: ;
         }
     }
@@ -146,14 +138,14 @@ int PlotWindow::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 5)
+        if (_id < 4)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 5;
+        _id -= 4;
     }
     if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 5)
+        if (_id < 4)
             *reinterpret_cast<QMetaType *>(_a[0]) = QMetaType();
-        _id -= 5;
+        _id -= 4;
     }
     return _id;
 }

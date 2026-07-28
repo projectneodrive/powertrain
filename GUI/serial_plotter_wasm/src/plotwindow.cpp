@@ -1,9 +1,7 @@
 #include "plotwindow.h"
-#include "apppage.h"
 #include "configpage.h"
 #include "demosource.h"
-#include "pidtunerpage.h"
-#include "plotterpage.h"
+#include "mainview.h"
 #include "serialbridge.h"
 #include "telemetryhub.h"
 
@@ -22,40 +20,41 @@ PlotWindow::PlotWindow(double windowS, QWidget *parent) : QMainWindow(parent)
     setWindowTitle(QStringLiteral("Powertrain console (WASM)"));
     resize(1320, 880);
 
-    // Telemetry singleton must exist before the pages subscribe to it.
+    // Telemetry singleton must exist before the views subscribe to it.
     TelemetryHub::instance();
 
     m_stack = new QStackedWidget(this);
     setCentralWidget(m_stack);
-
-    m_pages = {
-        new PlotterPage(windowS),
-        new ConfigPage(),
-        new PidTunerPage(windowS),
-    };
-    for (AppPage *page : m_pages)
-        m_stack->addWidget(page);
+    m_mainView = new MainView(windowS);
+    m_configPage = new ConfigPage();
+    m_stack->addWidget(m_mainView);     // index 0
+    m_stack->addWidget(m_configPage);   // index 1
 
     // ----------------------------------------------------------- toolbar --
     auto *toolbar = addToolBar(QStringLiteral("Main"));
     toolbar->setMovable(false);
 
-    // Page selector. Deliberately NOT a QMenu/QToolButton dropdown: popup menus
-    // are unstable in Qt for WebAssembly (they crashed the page). Checkable
-    // toolbar buttons give the same top-bar navigation with no popup.
+    // Page selector: checkable toolbar buttons (no QMenu popup -- those are
+    // unstable in Qt for WebAssembly).
     auto *pageGroup = new QActionGroup(this);
     pageGroup->setExclusive(true);
-    for (int i = 0; i < m_pages.size(); ++i) {
-        QAction *a = toolbar->addAction(m_pages.at(i)->pageTitle());
+    auto addPage = [&](const QString &name) {
+        QAction *a = toolbar->addAction(name);
         a->setCheckable(true);
-        a->setChecked(i == 0);
         pageGroup->addAction(a);
-        connect(a, &QAction::triggered, this, [this, i] { m_stack->setCurrentIndex(i); });
-    }
+        return a;
+    };
+    QAction *plotterAct = addPage(QStringLiteral("Live Plotter"));
+    QAction *tunerAct = addPage(QStringLiteral("PID Tuner"));
+    QAction *configAct = addPage(QStringLiteral("Motor Config"));
+    plotterAct->setChecked(true);
+    connect(plotterAct, &QAction::triggered, this, [this] { showMainPanel(MainView::PlotterPanel); });
+    connect(tunerAct, &QAction::triggered, this, [this] { showMainPanel(MainView::TunerPanel); });
+    connect(configAct, &QAction::triggered, this, [this] { showConfig(); });
 
     toolbar->addSeparator();
 
-    // Global USB connection (shared by all pages).
+    // Global USB connection (shared by all views).
     m_baudSpin = new QSpinBox;
     m_baudSpin->setRange(300, 4000000);
     m_baudSpin->setValue(115200);
@@ -70,15 +69,12 @@ PlotWindow::PlotWindow(double windowS, QWidget *parent) : QMainWindow(parent)
 
     toolbar->addSeparator();
 
-    // Side-panel toggle (applies to whichever page has a panel).
     m_togglePanelAction = toolbar->addAction(QStringLiteral("Hide panel"));
     m_togglePanelAction->setCheckable(true);
     m_togglePanelAction->setChecked(true);
     m_togglePanelAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+B")));
-    m_togglePanelAction->setToolTip(QStringLiteral("Show/hide the side panel (Ctrl+B)"));
+    m_togglePanelAction->setToolTip(QStringLiteral("Show/hide the control panel (Ctrl+B)"));
 
-    // Right-aligned connection status + build stamp (a stale cached .wasm is
-    // then obvious at a glance).
     auto *spacer = new QWidget;
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     toolbar->addWidget(spacer);
@@ -89,15 +85,25 @@ PlotWindow::PlotWindow(double windowS, QWidget *parent) : QMainWindow(parent)
 
     // --------------------------------------------------------- wiring --
     m_demo = new DemoSource(this);
-
     connect(m_connectButton, &QPushButton::clicked, this, &PlotWindow::onConnectClicked);
     connect(m_demoCheck, &QCheckBox::toggled, this, &PlotWindow::onDemoToggled);
     connect(m_togglePanelAction, &QAction::toggled, this, &PlotWindow::onTogglePanel);
-    connect(m_stack, &QStackedWidget::currentChanged, this, &PlotWindow::onPageChanged);
     connect(&SerialBridge::instance(), &SerialBridge::statusChanged,
             this, &PlotWindow::onStatusChanged);
+}
 
-    onPageChanged(0);
+void PlotWindow::showMainPanel(int panel)
+{
+    m_stack->setCurrentWidget(m_mainView);
+    m_mainView->showPanel(static_cast<MainView::Panel>(panel));
+    m_togglePanelAction->setEnabled(true);
+    m_mainView->setSidePanelVisible(m_togglePanelAction->isChecked());
+}
+
+void PlotWindow::showConfig()
+{
+    m_stack->setCurrentWidget(m_configPage);
+    m_togglePanelAction->setEnabled(false);   // config has no side panel
 }
 
 void PlotWindow::enableDemo(bool on)
@@ -120,7 +126,6 @@ void PlotWindow::onDemoToggled(bool on)
         m_demo->start();
     else
         m_demo->stop();
-    // The real port and the generator would otherwise interleave.
     m_connectButton->setEnabled(!on);
     m_statusLabel->setText(on ? QStringLiteral("Demo mode — synthetic telemetry ")
                               : QStringLiteral("Demo stopped "));
@@ -139,16 +144,6 @@ void PlotWindow::onTogglePanel(bool visible)
 {
     m_togglePanelAction->setText(visible ? QStringLiteral("Hide panel")
                                          : QStringLiteral("Show panel"));
-    AppPage *page = m_pages.value(m_stack->currentIndex());
-    if (page && page->hasSidePanel())
-        page->setSidePanelVisible(visible);
-}
-
-void PlotWindow::onPageChanged(int index)
-{
-    AppPage *page = m_pages.value(index);
-    const bool hasPanel = page && page->hasSidePanel();
-    m_togglePanelAction->setEnabled(hasPanel);
-    if (hasPanel)
-        page->setSidePanelVisible(m_togglePanelAction->isChecked());
+    if (m_stack->currentWidget() == m_mainView)
+        m_mainView->setSidePanelVisible(visible);
 }
