@@ -77,9 +77,6 @@ LivePlot::LivePlot(QWidget *parent) : QScrollArea(parent)
     m_splitter->setStyleSheet(QStringLiteral(
         "QSplitter::handle:vertical{background:#c8c8c8;margin:1px 0;}"
         "QSplitter::handle:vertical:hover{background:#3b82f6;}"));
-    // Natural total height taller than a typical viewport -> the area scrolls
-    // and, crucially, there's slack for the handles to redistribute.
-    m_splitter->setMinimumHeight((kNaturalChartHeight + kHeaderHeight) * kNumChannels);
 
     for (int ch = 0; ch < kNumChannels; ++ch) {
         auto *series = new QLineSeries;
@@ -148,6 +145,39 @@ LivePlot::LivePlot(QWidget *parent) : QScrollArea(parent)
     }
 
     setWidget(m_splitter);
+    updateSplitterMinHeight();
+}
+
+void LivePlot::updateSplitterMinHeight()
+{
+    // Natural total taller than a typical viewport -> the area scrolls and,
+    // crucially, there's slack for the handles to redistribute height. Scale it
+    // to the number of *visible* rows so hidden charts don't leave dead space.
+    int visible = 0;
+    for (const Row &r : m_rows)
+        if (r.container->isVisibleTo(m_splitter))   // ignores whether we're shown
+            ++visible;
+    m_splitter->setMinimumHeight(
+        (kNaturalChartHeight + kHeaderHeight) * std::max(1, visible));
+}
+
+void LivePlot::setChannelVisible(int channel, bool visible)
+{
+    for (const Row &r : m_rows) {
+        if (r.channel == channel) {
+            r.container->setVisible(visible);   // QSplitter hides its handle too
+            break;
+        }
+    }
+    updateSplitterMinHeight();
+}
+
+bool LivePlot::isChannelVisible(int channel) const
+{
+    for (const Row &r : m_rows)
+        if (r.channel == channel)
+            return r.container->isVisibleTo(m_splitter);
+    return false;
 }
 
 int LivePlot::rowIndexOfHeader(const QObject *header) const

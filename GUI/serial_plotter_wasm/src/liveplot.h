@@ -1,4 +1,5 @@
-// Reusable stack of five scrolling charts (Target/Iq/Vel/Pos/Vbus).
+// Reusable stack of scrolling charts, one per telemetry channel (see
+// channels.h: Target/Iq/Vel/Pos/Vbus + sensorless obsΔV/blend).
 //
 // Layout: compact by design -- the charts share the available height and all
 // five fit on screen when the window is reasonably tall; only when the viewport
@@ -33,6 +34,12 @@ public:
     void setWindow(double seconds);
     double window() const { return m_windowS; }
 
+    // Show/hide an individual channel's chart (driven by the plotter panel's
+    // checkboxes). Hiding a chart removes its row from the splitter and hands
+    // its height to the rest.
+    void setChannelVisible(int channel, bool visible);
+    bool isChannelVisible(int channel) const;
+
 protected:
     bool eventFilter(QObject *obj, QEvent *ev) override;
 
@@ -40,6 +47,7 @@ private:
     void redraw();
     void moveRow(int from, int to);
     int rowIndexOfHeader(const QObject *header) const;
+    void updateSplitterMinHeight();   // size for the currently visible rows
 
     struct Sample {
         double t;                                  // seconds relative to t0

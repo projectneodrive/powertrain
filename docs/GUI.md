@@ -64,9 +64,12 @@ and log are shared across all of them.
 
 ## Working with the graphs
 
-- Five stacked charts (Target / Iq / Vel / Pos / Vbus). They're **compact** and
-  share the height so several are visible at once; the area **scrolls** when the
-  window is too short.
+- Stacked charts (Target / Iq / Vel / Pos / Vbus, plus the sensorless
+  obsdV / blend on hall builds). They're **compact** and share the height so
+  several are visible at once; the area **scrolls** when the window is too short.
+- **Show/hide** individual graphs with the **Visible graphs** checkboxes on the
+  Live Plotter panel — untick the ones you don't care about and the rest expand
+  to fill the space.
 - **Drag a chart's header** (the `⠿ Name` strip) up or down to **reorder** the
   charts.
 - **Resize** a chart by dragging the divider between two charts — make the one

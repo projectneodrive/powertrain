@@ -53,7 +53,9 @@ int main(int argc, char **argv)
     LivePlot plot;
 
     std::printf("Compact layout:\n");
-    plot.resize(800, 1000);           // tall
+    // Tall enough for every channel's natural row (chart 160 + header 20 px).
+    const int tallH = 200 * kNumChannels + 100;
+    plot.resize(800, tallH);          // tall
     plot.show();
     app.processEvents();
     check(plot.verticalScrollBar()->maximum() == 0, "all charts fit a tall viewport (no scroll)");
@@ -117,9 +119,9 @@ int main(int argc, char **argv)
     plot.resize(800, 1000);
     app.processEvents();
     auto hs = headers(&plot);
-    check(hs.size() == 5, "found five draggable headers");
+    check(hs.size() == kNumChannels, "found one draggable header per channel");
 
-    if (hs.size() == 5) {
+    if (hs.size() == kNumChannels) {
         QLabel *top = hs.front();
         const QString topText = top->text();
         QLabel *bottom = hs.back();
@@ -145,21 +147,49 @@ int main(int argc, char **argv)
     std::printf("Resizable graphs:\n");
     {
         auto *sp = qobject_cast<QSplitter *>(plot.widget());
-        check(sp && sp->count() == 5, "charts live in a 5-way vertical splitter");
+        check(sp && sp->count() == kNumChannels,
+              "charts live in a per-channel vertical splitter");
         if (sp) {
             // A small, scrolling viewport -- the case where the old fixed-min
             // layout had zero slack and dragging did nothing.
             plot.resize(800, 600);
             app.processEvents();
-            sp->setSizes({500, 100, 100, 100, 100});   // make the top graph tall
+            QList<int> want;
+            want << 500;                                   // make the top graph tall
+            for (int i = 1; i < kNumChannels; ++i) want << 100;
+            sp->setSizes(want);
             app.processEvents();
             const QList<int> sizes = sp->sizes();
-            std::printf("  (splitter sizes: %d %d %d %d %d)\n",
-                        sizes.value(0), sizes.value(1), sizes.value(2),
-                        sizes.value(3), sizes.value(4));
-            check(sizes.size() == 5 && sizes[0] > sizes[1] + 200,
+            std::printf("  (splitter sizes: top=%d next=%d, %d rows)\n",
+                        sizes.value(0), sizes.value(1), int(sizes.size()));
+            check(sizes.size() == kNumChannels && sizes[0] > sizes[1] + 200,
                   "a graph resizes even in a short, scrolling viewport");
         }
+    }
+
+    std::printf("Channel visibility:\n");
+    {
+        plot.resize(800, tallH);
+        app.processEvents();
+        auto visibleHeaders = [&] {
+            int n = 0;
+            for (QLabel *l : headers(&plot))
+                if (l->isVisibleTo(&plot))
+                    ++n;
+            return n;
+        };
+        const int before = visibleHeaders();
+        check(before == kNumChannels, "every channel visible by default");
+
+        plot.setChannelVisible(0, false);         // hide the first chart
+        app.processEvents();
+        check(!plot.isChannelVisible(0), "hidden channel reports not visible");
+        check(visibleHeaders() == before - 1, "hiding a channel drops its row");
+
+        plot.setChannelVisible(0, true);
+        app.processEvents();
+        check(plot.isChannelVisible(0), "re-shown channel reports visible");
+        check(visibleHeaders() == before, "re-showing a channel restores its row");
     }
 
     std::printf(failures ? "\nFAILED (%d)\n" : "\nALL PASSED\n", failures);

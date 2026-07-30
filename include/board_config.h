@@ -49,14 +49,29 @@
 
 // ---------------------------------------------------------------------------
 //  Demi-pont AUX (résistance de freinage), gate driver dédié — TIM2.
-//  Topologie ODrive v3.6 : résistance entre DC+ et le point milieu. Seul le
-//  FET BAS (AUX_L) dissipe ; le FET HAUT est tenu BAS en permanence, sa diode
-//  de corps assure la roue libre vers DC+. Ne JAMAIS piloter les deux.
-//  Pins de la v3.6 de référence — à vérifier sur le clone si le frein ne
-//  réagit pas (schéma/continuité vers le driver du demi-pont AUX).
+//  Topologie ODrive v3.6 : résistance entre le point milieu et la MASSE. Le
+//  FET HAUT tire le point milieu vers DC+ (c'est lui qui dissipe), le FET BAS
+//  le ramène à la masse. Les deux sont pilotés en COMPLÉMENTAIRE avec temps
+//  mort, exactement comme le firmware ODrive (safety_critical_apply_brake_
+//  resistor_timings) :
+//     FET BAS  ON de 0            à period*(1-duty) - dt   (PWM mode 1)
+//     FET HAUT ON de period*(1-duty) + dt   à period       (PWM mode 2)
+//  Piloter un seul FET ne produit RIEN, et c'est mesuré sur ce banc :
+//   - FET BAS seul : le point milieu est tiré à la masse = 0 V aux bornes de
+//     la résistance, donc 0 A.
+//   - FET HAUT seul : son driver est à bootstrap ; le condensateur de bootstrap
+//     ne se charge que quand le FET BAS tire le point milieu vers le bas. Sans
+//     commutation du bas, VB-VS reste nul et le FET HAUT ne s'ouvre jamais.
+//  D'où l'obligation du complémentaire — et l'obligation d'un temps mort non
+//  nul, sous peine de court-circuit franc du bus.
+//  /!\ PIÈGE MATÉRIEL : le VDD du LM5109B est câblé sur GVDD, le régulateur de
+//  grille INTERNE du DRV8301. GVDD n'existe que si EN_GATE est haut. Le frein
+//  ne peut donc commuter QUE lorsque l'étage de puissance est réveillé —
+//  EN_GATE bas => demi-pont AUX non alimenté, les grilles ne bougent pas quels
+//  que soient les registres du timer.
 // ---------------------------------------------------------------------------
-#define PIN_AUX_L      PB10   // TIM2_CH3 — gate FET bas (PWM de freinage)
-#define PIN_AUX_H      PB11   // TIM2_CH4 — gate FET haut (maintenu LOW)
+#define PIN_AUX_L      PB10   // TIM2_CH3 — gate FET bas  (entrée LI de U7)
+#define PIN_AUX_H      PB11   // TIM2_CH4 — gate FET haut (entrée HI, dissipe)
 #pragma endregion
 
 // ============================================================================
@@ -102,17 +117,26 @@
 // ---------------------------------------------------------------------------
 //  Gestion de l'énergie régénérée (résistance de freinage 2 ohms sur AUX) +
 //  seuils DC bus, pour un bus 24 V nominal. Trois étages, du plus doux au
-//  plus dur — ordre requis : BRAKE_ON < BRAKE_FULL <= REGEN_START
-//  < REGEN_FULL < OV_TRIP :
-//   1. rampe de duty du frein  (BRAKE_ON -> BRAKE_FULL : 0 -> MAX_DUTY)
-//   2. dérating du courant de freinage moteur (REGEN_START -> REGEN_FULL)
-//   3. faute over-voltage latchée (OV_TRIP) : DRV8301 coupé, frein maintenu
-//  Duty max 1.0 = 26.5²/2 ≈ 350 W crête dans la résistance — transitoire ;
-//  réduire si la résistance chauffe trop en usage réel.
+//  plus dur — ordre requis :
+//      BRAKE_VBUS_OFF < BRAKE_VBUS_ON < REGEN_START < REGEN_FULL < OV_TRIP
+//   1. chopper sur la résistance (BRAKE_VBUS_ON, gain proportionnel)
+//   2. dérating du couple de freinage moteur (REGEN_START -> REGEN_FULL)
+//   3. faute over-voltage latchée (OV_TRIP)
+//  L'ordre est ce qui fait que la résistance a TOUJOURS sa chance avant qu'on
+//  sacrifie du couple de freinage, et avant la faute.
 // ---------------------------------------------------------------------------
 #define CFG_BRAKE_R            2.0f    // ohms, résistance sur les bornes AUX
 #define CFG_BRAKE_PWM_HZ       20000   // PWM frein (TIM2) — inaudible
-#define CFG_BRAKE_MAX_DUTY     1.0f    // 100 % possible : FET bas sans bootstrap
+// Plafond < 1.0 IMPÉRATIF : le driver du FET haut (LM5109B) est à bootstrap,
+// son condensateur C70 ne se recharge que pendant la conduction du FET bas.
+// 0.7 laisse 15 us de recharge par période à 20 kHz — très large.
+// 0.7 * 24²/2 ≈ 200 W crête dans la résistance.
+#define CFG_BRAKE_MAX_DUTY     0.7f
+// Temps mort entre l'ouverture d'un FET et la fermeture de l'autre. En dessous
+// du temps de commutation réel des FETs AUX, les deux conduisent brièvement =
+// court-circuit du bus. 500 ns est très conservateur (ODrive utilise ~240 ns).
+// En center-aligned il est ménagé sur LES DEUX fronts (voir brake.cpp).
+#define CFG_BRAKE_DEADTIME_NS  500
 
 // Rythme d'appel de updateBusSafety() (voir SafetyTask) : la mesure Vbus fait
 // une conversion ADC bloquante -- inutile de la faire à 1kHz (rien ne bouge
@@ -121,36 +145,63 @@
 // CFG_BUS_SAFETY_HZ doit rester un diviseur entier de 1000.
 #define CFG_BUS_SAFETY_HZ      200
 #define CFG_BUS_SAFETY_DIV     (1000 / CFG_BUS_SAFETY_HZ)
-#define CFG_BUS_SAFETY_DT      (1.0f / CFG_BUS_SAFETY_HZ)
 
-// Pente max du duty frein (duty/s). Trop lent -> le bus peut atteindre OV_TRIP
-// avant que la résistance dissipe (freinage franc = pic régen). Le duty frein
-// ne crée AUCUN couple (simple charge résistive sur le bus), donc pas de risque
-// d'à-coup mécanique à monter vite. 50 = 0->100 % en 20 ms.
-#define CFG_BRAKE_RAMP         50.0f
-#define CFG_VBUS_BRAKE_ON      24.8f   // V — début de la rampe frein
-#define CFG_VBUS_BRAKE_FULL    25.8f   // V — frein à MAX_DUTY
+// ---------------------------------------------------------------------------
+//  Source d'alimentation du bus. Change UNIQUEMENT les seuils : la source
+//  détermine si l'énergie de freinage a quelque part où aller.
+//
+//   PSU      : une alimentation de labo ne peut PAS absorber de courant. Toute
+//              l'énergie de freinage part dans la capacité de bus -> il faut
+//              dissiper TOUT DE SUITE. Le frein démarre juste au-dessus de la
+//              tension de service, et le dérating de couple reste loin
+//              au-dessus : c'est la résistance qui fait le travail, on ne
+//              sacrifie du couple qu'en dernier recours.
+//   BATTERY  : la batterie absorbe le courant de régénération (elle se
+//              recharge) tant qu'elle n'est pas pleine. On laisse donc le bus
+//              monter jusqu'à la tension de fin de charge AVANT d'allumer le
+//              frein : l'énergie est récupérée d'abord, dissipée ensuite.
+//
+//  /!\ En mode BATTERY, régler BRAKE_VBUS_ON sur la tension de fin de charge
+//      réelle du pack (ex. 6S Li-ion = 4.20 V/cellule = 25.2 V). Trop haut =
+//      surcharge des cellules.
+// ---------------------------------------------------------------------------
+#define CFG_BUS_SOURCE_PSU      1
+#define CFG_BUS_SOURCE_BATTERY  2
 
-// Dérating du couple de freinage moteur. Mesuré sur banc : la capacité de bus
-// (~1400 uF) passe de 24 à 28.5 V avec seulement ~0.4 W de régen (0.165 J en
-// 400 ms) -- autrement dit un Iq de freinage de 0.05 A suffit à faire monter le
-// bus quand l'alim ne peut pas absorber. Une plage de dérating haute ne mordait
-// donc JAMAIS (limite calculée 1.6 A vs Iq réel 0.05 A). On coupe le couple de
-// freinage bien plus tôt : à REGEN_FULL le moteur roue-libre, le bus cesse de
-// se charger. Coût : moins de frein moteur -- acceptable tant que la résistance
-// de freinage n'est pas prouvée fonctionnelle (commande série 'B').
-#define CFG_VBUS_REGEN_START   25.8f   // V — début dérating couple de freinage
-#define CFG_VBUS_REGEN_FULL    27.0f   // V — courant régen totalement coupé
+#ifndef CFG_BUS_SOURCE
+#define CFG_BUS_SOURCE  CFG_BUS_SOURCE_PSU
+#endif
+
+#if CFG_BUS_SOURCE == CFG_BUS_SOURCE_PSU
+  // Bus mesuré en fonctionnement : 23.5 V (accélération) à 24.2 V (pointe).
+  // BRAKE_VBUS_ON doit rester au-dessus de 24.2 pour ne pas moduler en usage
+  // normal, et aussi bas que possible pour dissiper avant que ça monte.
+  #define CFG_BRAKE_VBUS_ON      24.6f   // V — le chopper s'engage
+  #define CFG_BRAKE_VBUS_OFF     24.2f   // V — il se désengage (hystérésis)
+  // Dérating du couple de freinage : filet de sécurité seulement. Si la
+  // résistance suffit, on n'arrive jamais ici.
+  #define CFG_VBUS_REGEN_START   26.5f   // V — début dérating couple
+  #define CFG_VBUS_REGEN_FULL    27.5f   // V — couple de freinage totalement coupé
+#elif CFG_BUS_SOURCE == CFG_BUS_SOURCE_BATTERY
+  // 6S Li-ion : 25.2 V pack plein. En dessous, la régénération recharge le
+  // pack et le frein doit rester éteint — sinon on brûle l'énergie qu'on
+  // pourrait récupérer.
+  #define CFG_BRAKE_VBUS_ON      25.8f   // V — pack plein, plus rien à absorber
+  #define CFG_BRAKE_VBUS_OFF     25.4f   // V
+  #define CFG_VBUS_REGEN_START   27.0f   // V
+  #define CFG_VBUS_REGEN_FULL    28.0f   // V
+#else
+  #error "CFG_BUS_SOURCE doit valoir CFG_BUS_SOURCE_PSU ou CFG_BUS_SOURCE_BATTERY"
+#endif
+
+// Gain du chopper (duty par volt au-dessus de BRAKE_VBUS_OFF). 0.1/V -> à 1 V
+// de dépassement, duty 0.10 = 0.10 * 24²/2 ≈ 29 W dissipés. Mesuré sur banc :
+// la capacité de bus (~1400 uF) monte de 24 à 28.5 V avec seulement ~0.4 W de
+// régénération, donc quelques dizaines de W suffisent très largement à tenir
+// le bus. Monter le gain si le bus dépasse quand même BRAKE_VBUS_ON + 2 V.
+#define CFG_BRAKE_GAIN         0.1f
+
 #define CFG_VBUS_OV_TRIP       29.0f   // V — faute latchée (~10 ms consécutives)
-
-// Test manuel de la résistance de freinage (commande série 'B<duty>', moteur
-// désarmé). Sert à prouver que le demi-pont AUX conduit réellement : à duty d
-// sur un bus V, l'alim doit débiter d*V/R en plus (0.25 -> 3 A / 72 W à 24 V
-// avec 2 ohms) et la résistance doit chauffer. Si rien ne bouge, les FETs AUX
-// ne sont pas pilotés (non peuplés sur le clone, driver non alimenté, ou
-// PIN_AUX_L faux) -- aucun réglage firmware ne pourra dissiper.
-#define CFG_BRAKE_TEST_MAX_DUTY 0.25f  // plafond de sécurité pour le test
-#define CFG_BRAKE_TEST_MS       2000   // durée d'une impulsion de test (ms)
 
 // Consigne de vitesse max acceptée (rad/s) : ~90 % de la vitesse à vide
 // atteignable sous CFG_VOLT_LIMIT (KV en rpm/V -> *0.10472 en (rad/s)/V).
@@ -186,6 +237,18 @@
 #define CFG_PHASE_R          4.2093f      // phase resistance (ohm); 0 = leave unset
 #define CFG_PHASE_L          4890.65e-6f  // phase inductance (H);   0 = leave unset
 
+// ---------------------------------------------------------------------------
+//  Mode sensorless (observateur de flux MESC/Lemming) au-dessus d'un seuil de
+//  vitesse — supprime le plancher de quantification hall à vitesse. Le hall
+//  reste actif en dessous ; bascule fondue sur [VEL_LO, VEL_HI]. Prérequis :
+//  current-sense actif + CFG_PHASE_R/L renseignés (voir HybridSensor.h).
+//  MISE EN SERVICE : garder ENABLE=0, tourner, observer 'obsdV' en télémétrie
+//  (doit rester ~0 sur toute la plage) AVANT de passer ENABLE à 1.
+// ---------------------------------------------------------------------------
+#define CFG_SENSORLESS_ENABLE  1          // 1 = bascule hall->observateur au-dessus du seuil
+#define CFG_SENSORLESS_VEL_LO  5.0f       // rad/s : en dessous = hall pur
+#define CFG_SENSORLESS_VEL_HI  7.0f       // rad/s : au-dessus = observateur pur
+
 // ============================================================================
 //  FreeRTOS timing / priorities  (higher number = higher urgency)
 // ============================================================================
@@ -208,7 +271,7 @@
 // Task stack depths (in WORDS = 4 bytes). Kept modest to fit the default
 // FreeRTOS heap; bump if xTaskCreate returns pdFAIL.
 #define STACK_FOC        768
-#define STACK_SAFETY     384   // updateBusSafety : HAL ADC + Serial sur faute
+#define STACK_SAFETY     512   // updateBusSafety : HAL ADC + Serial (message de faute)
 #define STACK_TELEMETRY  512
 #define STACK_COMMS      768
 

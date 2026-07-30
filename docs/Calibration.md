@@ -190,6 +190,45 @@ longer has to rotate freely to arm, so you can arm with the wheel on the ground.
   additionally clamped to `CFG_VEL_CMD_MAX` (~90 % of the no‑load speed under
   `CFG_VOLT_LIMIT`) since asking for an unreachable speed only winds up the PID.
 
+## Step 6 — sensorless above the crossover *(hall only, optional)*
+
+The hall's 156‑states/rev quantization is the smoothness floor above ~5 rad/s
+(Step 3b). A **flux observer** (MESC/Lemming, `src/HybridSensor.h`) estimates the
+angle from the phase currents + applied voltages (BEMF integration) with **no
+quantization**, so handing commutation over to it at speed removes that floor.
+`HybridSensor` runs both sensors every FOC tick and blends hall → observer over
+`[CFG_SENSORLESS_VEL_LO, CFG_SENSORLESS_VEL_HI]` (default 5→7 rad/s); below the
+band it is bit‑for‑bit the hall‑only build.
+
+**Prerequisites:** current sense active (not the voltage fallback) and
+`CFG_PHASE_R` / `CFG_PHASE_L` measured (Step 1, command `M`). The observer's flux
+linkage is derived from `CFG_KV` / `CFG_POLE_PAIRS`.
+
+> **The observer must be VERIFIED before you trust it.** A wrong observer angle at
+> speed is a mis‑commutation → violent motion / overcurrent. Bring‑up is staged so
+> the handoff is *off* while you check the estimate:
+
+1. Leave `CFG_SENSORLESS_ENABLE 0`, build + flash. The observer runs in the
+   background (no effect on commutation) and two fields appear in telemetry:
+   `obsdV=` (observer velocity − hall velocity, rad/s) and `blnd=` (observer
+   fraction, 0…1).
+2. Arm, sweep the speed across and above the crossover (`V4`, `V6`, `V8`, `V10`).
+   Watch **`obsdV`**: it must stay **near 0** (a few tenths) at every speed once
+   moving. `blnd` stays `0.00` (handoff disabled). If `obsdV` is large, wrong‑sign,
+   or grows with speed → the observer is unhealthy (recheck `R`/`L`/`KV`, current
+   sense) — **do not enable**.
+3. Once `obsdV` is consistently small, set `CFG_SENSORLESS_ENABLE 1`, rebuild.
+   Now `blnd` ramps 0→1 across `[VEL_LO, VEL_HI]`; above `VEL_HI` the observer
+   drives commutation. The handoff has two safety gates: it never blends toward
+   the observer until its **direction is latched** *and* its **velocity agrees**
+   with the hall (`|obsdV|` within tolerance) — otherwise it stays on the hall.
+
+Tune the band with `CFG_SENSORLESS_VEL_LO` / `_VEL_HI` (keep `VEL_LO` high enough
+that the BEMF is strong — well above stall; a wider band = smoother handoff). No
+zero/offset to save: the observer is slaved to the hall's calibrated
+`CFG_ZERO_ELEC_ANGLE` at runtime, so the same commutation reference is used
+through the handoff.
+
 ---
 
 ## Quick reference — one full example (`board_config.h`)
@@ -209,6 +248,10 @@ longer has to rotate freely to arm, so you can arm with the wheel on the ground.
 // --- hall smoothness (hall only; Step 3b) ---
 #define CFG_HALL_PRECALIBRATED 1
 #define CFG_HALL_CAL_OFFSETS  { 0.0012f, -0.0009f, 0.0004f, 0.0007f, -0.0011f, -0.0003f }
+// --- sensorless above the crossover (hall only; Step 6) ---
+#define CFG_SENSORLESS_ENABLE  0                  // 1 after verifying obsdV~0
+#define CFG_SENSORLESS_VEL_LO  5.0f
+#define CFG_SENSORLESS_VEL_HI  7.0f
 ```
 
 ## Notes & limits

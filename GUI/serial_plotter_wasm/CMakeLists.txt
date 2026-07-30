@@ -31,6 +31,12 @@ target_link_libraries(serial_plotter_wasm PRIVATE
     Qt6::Charts
 )
 
+# The firmware's include/ holds telemetry_schema.h -- the single source of truth
+# for the telemetry channels, shared with src/main.cpp. channels.h #includes it.
+target_include_directories(serial_plotter_wasm PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../include"
+)
+
 # Note: we intentionally do NOT set -sEXPORTED_RUNTIME_METHODS here. Qt sets it
 # on its own link line and the last value wins, so ours would be silently
 # dropped. The Web Serial glue in src/serialbridge.cpp therefore avoids ccall

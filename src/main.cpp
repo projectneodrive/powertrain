@@ -8,10 +8,12 @@
 #include "encoders/stm32hwencoder/STM32HWEncoder.h"
 #include "encoders/smoothing/SmoothingSensor.h"
 #include "HallSensorSmoothVel.h"
+#include "HybridSensor.h"
 #include "current_sense/hardware_specific/stm32/stm32_mcu.h"  // Stm32CurrentSenseParams
 #include "drv8301.h"
 #include "odrive_can.h"
 #include "board_config.h"
+#include "brake.h"
 
 using namespace odcan;
 
@@ -57,7 +59,10 @@ static void doHallB() { sensor.handleB(); }
 static void doHallC() { sensor.handleC(); }
 // Interpole l'angle entre deux fronts hall (60° elec. de résolution sinon)
 SmoothingSensor smooth = SmoothingSensor(sensor, motor);
-Sensor& foc_sensor = smooth;
+// Hybride hall + observateur sensorless (bascule à vitesse). Transparent (=hall
+// pur) tant que hybrid.enabled est faux. Voir HybridSensor.h.
+HybridSensor hybrid = HybridSensor(smooth, motor);
+Sensor& foc_sensor = hybrid;
 #else
 STM32HWEncoder sensor = STM32HWEncoder(CFG_ENC_PPR, PIN_ENC_A, PIN_ENC_B);
 Sensor& foc_sensor = sensor;
@@ -93,13 +98,6 @@ volatile float g_shaft_vel   = 0.0f;   // rad/s
 // --- DC bus safety (écrit par SafetyTask, lu par FOCTask/CommsTask) ---
 volatile float g_vbus_filt      = 0.0f;              // Vbus filtré (V)
 volatile float g_regen_iq_limit = CFG_CURRENT_LIMIT; // |Iq| de freinage max (A)
-volatile float g_brake_duty     = 0.0f;              // duty frein appliqué [0..1]
-static   HardwareTimer *g_brakeTimer = nullptr;
-static   uint32_t g_brakeChan = 0;
-static   float    g_brake_ramp      = 0.0f;          // état de la rampe de duty
-// Test manuel du frein (commande série 'B<duty>') — voir board_config.h.
-static   volatile float    g_brake_test_duty = 0.0f;
-static   volatile uint32_t g_brake_test_end  = 0;    // millis de fin ; 0 = inactif
 
 // 20 kHz FOC tick ISR
 static void onFocTick() {
@@ -189,23 +187,6 @@ static float median3(float a, float b, float c) {
   return fmaxf(fminf(a, b), fminf(fmaxf(a, b), c));
 }
 
-static void setBrakeDuty(float d) {
-  g_brake_duty = d;
-  if (g_brakeTimer)
-    g_brakeTimer->setCaptureCompare(g_brakeChan, (uint32_t)(d * 4095.0f),
-                                    RESOLUTION_12B_COMPARE_FORMAT);
-}
-
-static void brakeInit() {
-  // PWM matériel pur (TIM2_CH3 sur PB10) : zéro CPU, zéro interruption. La
-  // mise à jour du duty depuis SafetyTask est une simple écriture registre.
-  PinName p = digitalPinToPinName(PIN_AUX_L);
-  TIM_TypeDef *inst = (TIM_TypeDef *)pinmap_peripheral(p, PinMap_TIM);
-  g_brakeChan = STM_PIN_CHANNEL(pinmap_function(p, PinMap_TIM));
-  g_brakeTimer = new HardwareTimer(inst);
-  g_brakeTimer->setPWM(g_brakeChan, PIN_AUX_L, CFG_BRAKE_PWM_HZ, 0);
-}
-
 static void updateBusSafety() {
   static float s0 = -1.0f, s1 = -1.0f;          // 2 derniers échantillons bruts
   float v = readVbusRaw();                      // volts au pin; -1.0f si erreur
@@ -218,16 +199,23 @@ static void updateBusSafety() {
     g_vbus_filt = (f <= 0.0f) ? m : f + 0.33f * (m - f);
   }
   float vb = g_vbus_filt;
-  if (vb <= 0.0f) { setBrakeDuty(0.0f); return; }  // pas encore de mesure
+  if (vb <= 0.0f) { brake::off(); return; }        // pas encore de mesure
 
   // Étage 3 : faute over-voltage latchée. Anti-rebond ~10 ms consécutives :
   // un transitoire ou des échantillons corrompus ne doivent JAMAIS latcher.
   // updateBusSafety() tourne maintenant à 200 Hz (5 ms/appel, voir
   // SafetyTask) au lieu de 1 kHz -- 2 appels consécutifs plutôt que 10 pour
   // garder le même temps de réponse réel (~10 ms).
-  // On coupe le DRV8301 mais PAS le frein : le demi-pont AUX a son propre
-  // gate driver, indépendant d'EN_GATE, et doit continuer d'écrêter le bus
-  // (BEMF redressée par les diodes de corps tant que le moteur tourne).
+  //
+  // On arrive ici seulement si les étages 1 (dissipation) et 2 (dérating du
+  // couple) n'ont pas suffi : la résistance a toujours eu sa chance avant,
+  // c'est garanti par l'ordre des seuils (voir board_config.h).
+  // Couper EN_GATE coupe aussi GVDD, donc le frein (VDD du LM5109B vient du
+  // DRV8301) : au-delà de OV_TRIP il n'y a plus de dissipation, le moteur est
+  // simplement mis en roue libre. C'est le comportement voulu — la faute est
+  // le dernier recours, pas un mode de régulation.
+  // TODO: pour garder la dissipation active en faute, laisser EN_GATE haut et
+  // couper le moteur via BDTR.MOE de TIM1 (six grilles en Hi-Z, GVDD conservée).
   static uint8_t ov_count = 0;
   if (vb > CFG_VBUS_OV_TRIP) {
     if (ov_count < 255) ov_count++;
@@ -242,39 +230,16 @@ static void updateBusSafety() {
     ov_count = 0;
   }
 
-  // Test manuel du frein : force le duty, moteur désarmé uniquement (aucun
-  // couple en jeu). Prend la main sur la régulation normale du duty le temps de
-  // l'impulsion, mais APRÈS l'étage 3 : la faute over-voltage doit rester armée
-  // en permanence. Voir CFG_BRAKE_TEST_* dans board_config.h.
-  if (g_brake_test_end != 0) {
-    if ((int32_t)(millis() - g_brake_test_end) < 0 && !g_focReady && !g_fault) {
-      setBrakeDuty(g_brake_test_duty);
-      return;
-    }
-    g_brake_test_end = 0;
-    g_brake_ramp     = 0.0f;
-    setBrakeDuty(0.0f);
-    Serial.print("[brake test] fin. Vbus="); Serial.print(vb, 1);
-    Serial.println(" V — l'alim a-t-elle débité ? la résistance a-t-elle chauffé ?");
-  }
-
   // Étage 2 : dérating du courant de freinage autorisé (consommé par FOCTask).
+  // Filet de sécurité seulement : les seuils REGEN_* sont au-dessus de ceux du
+  // chopper, donc on ne sacrifie du couple de freinage que si la dissipation
+  // n'a pas suffi à tenir le bus.
   float s = 1.0f - (vb - CFG_VBUS_REGEN_START)
                  / (CFG_VBUS_REGEN_FULL - CFG_VBUS_REGEN_START);
   g_regen_iq_limit = motor.current_limit * _constrain(s, 0.0f, 1.0f);
 
-  // Étage 1 : duty frein cible = rampe proportionnelle en tension +
-  // feedforward sur la puissance régénérée mesurée (Ibus < 0) :
-  // duty·V²/R = -Ibus·V.
-  float target = (vb - CFG_VBUS_BRAKE_ON) / (CFG_VBUS_BRAKE_FULL - CFG_VBUS_BRAKE_ON);
-  float ib = g_io.ibus;
-  if (ib < 0.0f) target += (-ib) * CFG_BRAKE_R / vb;
-  target = _constrain(target, 0.0f, CFG_BRAKE_MAX_DUTY);
-
-  // Limite de pente (CFG_BRAKE_RAMP) avant application.
-  float step = CFG_BRAKE_RAMP * CFG_BUS_SAFETY_DT;
-  g_brake_ramp += _constrain(target - g_brake_ramp, -step, step);
-  setBrakeDuty(g_brake_ramp);
+  // Étage 1 : le chopper est piloté par brake::update() depuis SafetyTask
+  // (1 kHz), pas ici — voir SafetyTask.
 }
 
 static void enableStage() {
@@ -389,6 +354,7 @@ static void applyControl() {
   uint32_t now = millis();
 
   if (g_io.req_reboot) {
+    brake::off();
     motor.disable(); digitalWrite(PIN_EN_GATE, LOW);
     NVIC_SystemReset();
   }
@@ -635,16 +601,29 @@ static void SafetyTask(void *) {
     }
 
     // Vérification de nFAULT uniquement si le driver est censé être actif
-    if (digitalRead(PIN_EN_GATE) == HIGH && digitalRead(PIN_N_FAULT) == LOW) {
+    bool en_gate = (digitalRead(PIN_EN_GATE) == HIGH);
+    if (en_gate && digitalRead(PIN_N_FAULT) == LOW) {
       fault_counter++;
       if (fault_counter > 10) { // Anti-rebond : 10 ms consécutives à bas
         digitalWrite(PIN_EN_GATE, LOW); // Coupure d'urgence immédiate
         g_fault = true;
         g_io.axis_error |= ERR_MOTOR_FAILED;
+        en_gate = false;
       }
     } else {
       fault_counter = 0; // Reset si le signal revient au vert ou driver éteint
     }
+
+    // Chopper de dissipation. Appelé à 1 kHz alors que Vbus n'est rafraîchi
+    // qu'à 200 Hz : ce n'est pas la régulation qu'on accélère, c'est la
+    // COUPURE. Un désarmement/une faute est pris en compte en 1 ms au lieu de
+    // 5, pour deux écritures registre — l'ADC bloquant, lui, reste à 200 Hz
+    // (voir le commentaire de perf ci-dessus).
+    // Le frein n'est physiquement alimenté que si EN_GATE est haut (GVDD vient
+    // du DRV8301) : la condition n'est donc pas une précaution, c'est la
+    // réalité du câblage.
+    brake::update(g_vbus_filt, g_focReady && !g_fault && en_gate);
+
     vTaskDelayUntil(&last, pdMS_TO_TICKS(1));
   }
 }
@@ -736,26 +715,6 @@ static void handleSerial() {
             Serial.print("AK V: vel "); Serial.print(old, 2);
             Serial.print(" -> ");       Serial.print(v, 2);
             Serial.println(" rad/s");
-            break;
-          }
-          case 'B': case 'b': {
-            // B<duty> : impulsion de test sur la résistance de freinage.
-            if (g_focReady || g_io.armed) {
-              Serial.println("[!] B: désarmer d'abord (envoyer 'I'), puis 'B<duty>'.");
-              break;
-            }
-            float d = _constrain(v, 0.0f, CFG_BRAKE_TEST_MAX_DUTY);
-            g_brake_test_duty = d;
-            g_brake_test_end  = millis() + CFG_BRAKE_TEST_MS;
-            Serial.print("AK B: brake duty "); Serial.print(d, 2);
-            Serial.print(" pendant ");        Serial.print(CFG_BRAKE_TEST_MS);
-            Serial.println(" ms");
-            Serial.print("     attendu sur l'alim: +");
-            Serial.print(d * g_vbus_filt / CFG_BRAKE_R, 2);
-            Serial.print(" A (");
-            Serial.print(d * g_vbus_filt * g_vbus_filt / CFG_BRAKE_R, 0);
-            Serial.println(" W dans la résistance).");
-            Serial.println("     Rien sur l'ampèremètre + résistance froide = demi-pont AUX non piloté.");
             break;
           }
           case 'C': case 'c':
@@ -864,6 +823,7 @@ static void handleSerial() {
 //  longer be trusted to keep running FOCTask/SafetyTask correctly.
 // ============================================================================
 extern "C" void vApplicationStackOverflowHandler(TaskHandle_t /*xTask*/, char *pcTaskName) {
+  brake::off();
   digitalWrite(PIN_EN_GATE, LOW);
   Serial.print("\n[FATAL] Stack overflow in task \"");
   Serial.print(pcTaskName);
@@ -873,6 +833,7 @@ extern "C" void vApplicationStackOverflowHandler(TaskHandle_t /*xTask*/, char *p
 }
 
 extern "C" void vApplicationMallocFailedHook(void) {
+  brake::off();
   digitalWrite(PIN_EN_GATE, LOW);
   Serial.println("\n[FATAL] FreeRTOS heap allocation failed (configTOTAL_HEAP_SIZE exhausted) -- halting.");
   Serial.flush();
@@ -887,15 +848,25 @@ static void SerialTask(void *) {
     Serial.print("t=");         Serial.print(millis());
     Serial.print(" #");         Serial.print(beat++);
     Serial.print(" mode=");      Serial.print(g_io.control_mode);
-    Serial.print(" tgt=");       Serial.print(g_active_target, 2);
-    Serial.print(" Iq=");        Serial.print(g_io.iq_measured, 2);
-    Serial.print(" vel=");       Serial.print(g_io.vel_rev * TWO_PI, 2);
-    Serial.print(" pos=");       Serial.print(g_io.pos_rev * TWO_PI, 2);
-    Serial.print(" Vbus=");      Serial.print(g_io.vbus, 1);
+    // Telemetry channels, generated from the schema shared with the web GUI
+    // (include/telemetry_schema.h). Add a channel THERE and it streams here and
+    // appears in the GUI's graphs automatically. The status/CAN fields below are
+    // not plotted channels, so they stay hand-written.
+    // obsdV/blnd touch the sensorless observer -> hall builds only.
+#define TELEMETRY_CHANNEL(key, label, color, altkey, prec, expr) \
+    Serial.print(" " #key "="); Serial.print((float)(expr), prec);
+#if SENSOR_TYPE == SENSOR_TYPE_HALL
+#define TELEMETRY_CHANNEL_HALL TELEMETRY_CHANNEL
+#else
+#define TELEMETRY_CHANNEL_HALL(key, label, color, altkey, prec, expr)
+#endif
+#include "telemetry_schema.h"
+#undef TELEMETRY_CHANNEL_HALL
+#undef TELEMETRY_CHANNEL
     Serial.print(g_focReady ? " RUN" : (g_calibrated ? " idle" : " SAFE"));
     Serial.print(g_fault ? " [FAULT]" : "");
     if (g_io.axis_error) { Serial.print(" err=0x"); Serial.print(g_io.axis_error, HEX); }
-    if (g_brake_duty > 0.0f) { Serial.print(" brk="); Serial.print(g_brake_duty, 2); }
+    if (brake::duty() > 0.0f) { Serial.print(" brk="); Serial.print(brake::duty(), 2); }
     Serial.print(" can_tx_ok=");   Serial.print(g_can.txOkCount());
     Serial.print(" can_tx_fail="); Serial.print(g_can.txFailCount());
     Serial.print(" can_rx=");      Serial.println(g_can.rxCount());
@@ -907,8 +878,9 @@ static void SerialTask(void *) {
 //  Setup Initialization
 // ============================================================================
 void setup() {
-  // Demi-pont AUX (frein) : gates BAS immédiatement. AUX_H reste BAS en
-  // PERMANENCE — les deux FETs passants = court-circuit franc du bus.
+  // Demi-pont AUX (frein) : gates BAS immédiatement, AVANT toute bascule en
+  // fonction alternative, pour que le demi-pont ne passe jamais par un état
+  // indéterminé au démarrage. brake::init() prend la main plus bas.
   pinMode(PIN_AUX_H, OUTPUT); digitalWrite(PIN_AUX_H, LOW);
   pinMode(PIN_AUX_L, OUTPUT); digitalWrite(PIN_AUX_L, LOW);
 
@@ -997,6 +969,21 @@ void setup() {
   
   if (CFG_PHASE_R > 0.0f) motor.phase_resistance = CFG_PHASE_R;
   if (CFG_PHASE_L > 0.0f) motor.phase_inductance = CFG_PHASE_L;
+  motor.KV_rating = CFG_KV;
+
+#if SENSOR_TYPE == SENSOR_TYPE_HALL
+  // Observateur sensorless : flux_linkage (Wb) dérivé de KV/pp. Le constructeur
+  // de l'observateur tourne avant setup() (KV_rating pas encore posé) -> ici.
+  hybrid._obs.flux_linkage = 60.0f / (_SQRT3 * _PI * CFG_KV * (float)CFG_POLE_PAIRS * 2.0f);
+  hybrid._obs.min_elapsed_time = CFG_HALL_VEL_WINDOW;  // même fenêtre que le hall
+                                          // -> obsdV = vrai écart de suivi, pas un
+                                          //    artefact de fenêtre, et v_obs lissé
+  hybrid.vel_lo  = CFG_SENSORLESS_VEL_LO;
+  hybrid.vel_hi  = CFG_SENSORLESS_VEL_HI;
+  hybrid.enabled = (CFG_SENSORLESS_ENABLE != 0) && g_iSenseOk;  // besoin du current-sense
+  hybrid.initObserver();
+#endif
+
   if (!motor.init()) { Serial.println("[-] motor.init FAILED"); while (1); }
   motor.disable(); // Force initial safe state
 
@@ -1019,14 +1006,22 @@ void setup() {
   }
   g_io.last_setpoint_ms = millis();
 
-  // Frein rhéostatique (duty 0 tant que Vbus < CFG_VBUS_BRAKE_ON) + config
-  // ADC Vbus (480 cycles) AVANT le lancement de SafetyTask qui lit à 1 kHz.
-  brakeInit();
+  // Chopper de dissipation (sort ARRÊTÉ de init()) + config ADC Vbus
+  // (480 cycles) AVANT le lancement de SafetyTask qui lit à 1 kHz.
+  // brake::init() est appelé après le reset du DRV8301 ci-dessus : GVDD, qui
+  // alimente le LM5109B, n'existe que DRV8301 réveillé.
+  brake::init();
   vbusAdcInit();
   Serial.print("Brake resistor: "); Serial.print(CFG_BRAKE_R, 1);
-  Serial.print(" ohm on AUX, ramp "); Serial.print(CFG_VBUS_BRAKE_ON, 1);
-  Serial.print("-");                  Serial.print(CFG_VBUS_BRAKE_FULL, 1);
-  Serial.print(" V, regen derate ");  Serial.print(CFG_VBUS_REGEN_START, 1);
+#if CFG_BUS_SOURCE == CFG_BUS_SOURCE_PSU
+  Serial.print(" ohm on AUX [PSU], chopper ");
+#else
+  Serial.print(" ohm on AUX [BATTERY], chopper ");
+#endif
+  Serial.print(CFG_BRAKE_VBUS_OFF, 1);
+  Serial.print("/");                  Serial.print(CFG_BRAKE_VBUS_ON, 1);
+  Serial.print(" V gain ");           Serial.print(CFG_BRAKE_GAIN, 2);
+  Serial.print(", regen derate ");    Serial.print(CFG_VBUS_REGEN_START, 1);
   Serial.print("-");                  Serial.print(CFG_VBUS_REGEN_FULL, 1);
   Serial.print(" V, OV trip ");       Serial.print(CFG_VBUS_OV_TRIP, 1);
   Serial.println(" V");
@@ -1048,9 +1043,9 @@ void setup() {
 
   Serial.println("SAFE state (disarmed). Send 'A' via serial or CAN CLOSED_LOOP state to arm.");
 #if SENSOR_TYPE == SENSOR_TYPE_HALL
-  Serial.println("Serial cmds: A arm | I idle | V<rad/s> | T<Nm> | X<rad> pos | M charac R/L | H hall-cal | B<duty> brake-test | C clear | KP/KI/KD<v> vel PID | K show");
+  Serial.println("Serial cmds: A arm | I idle | V<rad/s> | T<Nm> | X<rad> pos | M charac R/L | H hall-cal | C clear | KP/KI/KD<v> vel PID | K show");
 #else
-  Serial.println("Serial cmds: A arm | I idle | V<rad/s> | T<Nm> | X<rad> pos | M charac R/L | B<duty> brake-test | C clear | KP/KI/KD<v> vel PID | K show");
+  Serial.println("Serial cmds: A arm | I idle | V<rad/s> | T<Nm> | X<rad> pos | M charac R/L | C clear | KP/KI/KD<v> vel PID | K show");
 #endif
   Serial.println("  config:    LC<A> current-lim | LV<rad/s> vel-lim | G<v> pos-gain | Q dump config (cfg ...)");
   vTaskStartScheduler();

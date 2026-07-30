@@ -55,6 +55,20 @@ hardware; an older build simply won't answer `Q` or accept `LC/LV/G/X`. In
 **Demo** mode the app fabricates a `cfg` line so both pages are usable with no
 board attached.
 
+### Adding a telemetry channel (one place)
+
+The plotted channels are defined once, in
+[`include/telemetry_schema.h`](../../include/telemetry_schema.h), and shared by
+both sides of the wire: the firmware's `SerialTask` generates its `key=value`
+output from it, and the GUI's [`src/channels.h`](src/channels.h) generates the
+chart/checkbox list from the *same* file. To add a signal, add one
+`TELEMETRY_CHANNEL(key, label, color, altkey, prec, expr)` line there — it then
+streams from the board and shows up as a new graph (with its own **Visible
+graphs** checkbox) automatically. `expr` is a firmware-side value expression the
+GUI never compiles; use `TELEMETRY_CHANNEL_HALL` for signals that only exist on
+hall builds. (Demo values are synthetic, so give a new channel one in
+`src/demosource.cpp` too if you want it to animate offline.)
+
 ## How USB works in the browser (important)
 
 Qt's `QSerialPort` **does not exist** in a WebAssembly build — a sandboxed

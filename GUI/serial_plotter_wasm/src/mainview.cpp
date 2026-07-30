@@ -3,6 +3,7 @@
 #include "serialbridge.h"
 #include "telemetryhub.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFile>
@@ -106,11 +107,11 @@ QWidget *MainView::buildPlotterPanel(double windowS)
     auto *cmdLayout = new QVBoxLayout(cmdGroup);
     m_commandEdit = new QLineEdit;
     m_commandEdit->setPlaceholderText(
-        QStringLiteral("e.g. A, I, M, C, T1.5, V10, KP0.1, Q"));
+        QStringLiteral("e.g. A, I, C, T1.5, V10, KP0.1, X0.1, Q"));
     auto *sendButton = new QPushButton(QStringLiteral("Send"));
     auto *quickRow = new QHBoxLayout;
-    const std::array<std::pair<const char *, const char *>, 4> quick = {{
-        {"A (arm)", "A"}, {"I (idle)", "I"}, {"M (measure)", "M"}, {"C (clear)", "C"}}};
+    const std::array<std::pair<const char *, const char *>, 3> quick = {{
+        {"A (arm)", "A"}, {"I (idle)", "I"}, {"C (clear)", "C"}}};
     for (const auto &q : quick) {
         auto *b = new QPushButton(QString::fromLatin1(q.first));
         const QString cmd = QString::fromLatin1(q.second);
@@ -121,8 +122,25 @@ QWidget *MainView::buildPlotterPanel(double windowS)
     cmdLayout->addWidget(sendButton);
     cmdLayout->addLayout(quickRow);
 
+    // One checkbox per telemetry channel -> show/hide its chart in the shared
+    // graph. Driven off kChannels so new channels (added in the shared schema)
+    // appear here automatically.
+    auto *chanGroup = new QGroupBox(QStringLiteral("Visible graphs"));
+    auto *chanLayout = new QVBoxLayout(chanGroup);
+    chanLayout->setSpacing(2);
+    for (int ch = 0; ch < kNumChannels; ++ch) {
+        auto *cb = new QCheckBox(QString::fromUtf8(kChannels[ch].label));
+        cb->setChecked(true);
+        cb->setStyleSheet(QStringLiteral("QCheckBox{color:%1;font-weight:bold;}")
+                              .arg(QString::fromLatin1(kChannels[ch].color)));
+        connect(cb, &QCheckBox::toggled, this,
+                [this, ch](bool on) { m_plot->setChannelVisible(ch, on); });
+        chanLayout->addWidget(cb);
+    }
+
     layout->addWidget(ctrlGroup);
     layout->addWidget(cmdGroup);
+    layout->addWidget(chanGroup);
     layout->addStretch(1);
 
     connect(clearButton, &QPushButton::clicked, this, &MainView::clearAll);

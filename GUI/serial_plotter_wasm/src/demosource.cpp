@@ -72,14 +72,22 @@ void DemoSource::tick()
 
     const double vbus = 24.0 + 0.4 * std::sin(m_ms / 900.0) + noise(0.05);
 
-    QString line = QStringLiteral("t=%1 #%2 mode=1 tgt=%3 Iq=%4 vel=%5 pos=%6 Vbus=%7 RUN\n")
+    // Sensorless observer health (mirrors HybridSensor): obsΔV stays ~0 (a bit
+    // noisier at low speed), blend ramps 0->1 across the 5..7 rad/s crossover.
+    const double av    = std::abs(m_vel);
+    const double blnd  = (av <= 5.0) ? 0.0 : (av >= 7.0 ? 1.0 : (av - 5.0) / 2.0);
+    const double obsdV = noise(0.05) + 0.3 * std::exp(-av / 1.5) * std::sin(m_ms / 250.0);
+
+    QString line = QStringLiteral("t=%1 #%2 mode=1 tgt=%3 Iq=%4 vel=%5 pos=%6 Vbus=%7 obsdV=%8 blnd=%9 RUN\n")
                        .arg(m_ms)
                        .arg(m_beat++)
                        .arg(m_tgt, 0, 'f', 2)
                        .arg(m_iq, 0, 'f', 2)
                        .arg(m_vel, 0, 'f', 2)
                        .arg(m_pos, 0, 'f', 2)
-                       .arg(vbus, 0, 'f', 1);
+                       .arg(vbus, 0, 'f', 1)
+                       .arg(obsdV, 0, 'f', 2)
+                       .arg(blnd, 0, 'f', 2);
 
     // Occasional non-telemetry line, so the serial monitor pane gets exercised
     // too (the parser must route these to the log, not the plots).
