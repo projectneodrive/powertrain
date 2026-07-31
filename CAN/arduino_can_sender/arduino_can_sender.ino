@@ -28,7 +28,7 @@
 
 // ---------------- configuration (must match the board) ----------------------
 const uint8_t NODE_ID  = 0;            // = CFG_CAN_NODE_ID in board_config.h
-const long    CAN_BAUD = CAN_100KBPS;  // = CFG_CAN_BAUD (100 kbit/s)
+const long    CAN_BAUD = CAN_500KBPS;  // = CFG_CAN_BAUD (500 kbit/s)
 const uint8_t MCP_CLK  = MCP_8MHZ;     // set MCP_16MHZ if your module has a 16 MHz crystal
 const uint8_t CS_PIN   = 10;
 

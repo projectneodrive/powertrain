@@ -31,7 +31,7 @@
 
 // ---------------- configuration (must match the board) ----------------------
 const uint8_t NODE_ID  = 0;            // = CFG_CAN_NODE_ID in board_config.h
-const uint32_t CAN_BAUD = 100000;       // = CFG_CAN_BAUD (100 kbit/s)
+const uint32_t CAN_BAUD = 500000;       // = CFG_CAN_BAUD (500 kbit/s)
 
 // Pick GPIOs that are free on your ESP32 board.
 // These are the TWAI controller pins, not the CANH/CANL bus wires.
@@ -126,7 +126,7 @@ void clearErrors() { sendTrigger(CMD_CLEAR_ERRORS); }
 
 static void initTwai() {
   twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(TWAI_TX_PIN, TWAI_RX_PIN, TWAI_MODE_NORMAL);
-  twai_timing_config_t t_config = TWAI_TIMING_CONFIG_100KBITS();
+  twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
   twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
   while (twai_driver_install(&g_config, &t_config, &f_config) != ESP_OK) {

@@ -3,7 +3,7 @@ from odrive.enums import *
 
 msgList = []
 nodes = [can.Node('Master')]
-buses = [can.Bus('ODrive', None, 100000)]
+buses = [can.Bus('ODrive', None, 500000)]
 
 for axisID in range(0, 8):
     newNode = can.Node(f"ODrive_Axis{axisID}")
