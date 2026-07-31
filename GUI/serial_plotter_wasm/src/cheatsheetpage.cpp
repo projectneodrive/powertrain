@@ -1,11 +1,9 @@
 #include "cheatsheetpage.h"
-#include "serialbridge.h"
 
 #include <QAbstractItemView>
 #include <QFont>
 #include <QHeaderView>
 #include <QLabel>
-#include <QPushButton>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
@@ -16,48 +14,49 @@ struct Cmd {
     const char *command;
     const char *example;
     const char *description;
-    bool sendable;          // argument-less -> offer a Send button
 };
 
 // Mirrors handleSerial() in src/main.cpp. Keep in sync when commands change.
 const Cmd kCommands[] = {
-    {"A", "A", "Arm — enter closed loop. Runs a one-time calibration on first arm (the motor twitches; keep it free).", true},
-    {"I", "I", "Idle — disarm, back to the safe state.", true},
-    {"C", "C", "Clear latched errors / e-stop.", true},
-    {"M", "M", "Measure phase resistance & inductance (motor free, disarmed).", true},
-    {"H", "H", "Hall-only: calibrate the hall sector angles (motor free, disarmed; spins ~10 s).", true},
-    {"B<duty>", "B0.1", "Brake-resistor test pulse (disarmed). duty 0..0.25.", false},
-    {"V<rad/s>", "V10", "Velocity setpoint — switches to velocity mode.", false},
-    {"T<Nm>", "T0.5", "Torque setpoint — switches to torque mode.", false},
-    {"X<rad>", "X3.14", "Position setpoint — switches to position mode.", false},
-    {"KP<v>", "KP0.3", "Velocity PID proportional gain (Nm per rad/s).", false},
-    {"KI<v>", "KI2", "Velocity PID integral gain.", false},
-    {"KD<v>", "KD0", "Velocity PID derivative gain.", false},
-    {"K", "K", "Re-apply and print the current velocity PID gains.", true},
-    {"JP<v>", "JP1.0", "Current PID proportional gain (V per A).", false},
-    {"JI<v>", "JI50", "Current PID integral gain.", false},
-    {"JD<v>", "JD0", "Current PID derivative gain.", false},
-    {"PP<v>", "PP1.0", "Position PID proportional gain (same as G).", false},
-    {"PI<v>", "PI0", "Position PID integral gain.", false},
-    {"PD<v>", "PD0", "Position PID derivative gain.", false},
-    {"LC<A>", "LC5", "Current limit (A), clamped to CFG_CURRENT_LIMIT_MAX.", false},
-    {"LV<rad/s>", "LV20", "Velocity limit (rad/s), clamped to CFG_VEL_LIMIT_MAX.", false},
-    {"G<v>", "G1.0", "Position controller P gain (alias of PP).", false},
-    {"Q", "Q", "Dump the live config as a 'cfg …' line (used by Motor Config & PID Tuner).", true},
+    {"A", "A", "Arm — enter closed loop. Runs a one-time calibration on first arm (the motor twitches; keep it free)."},
+    {"I", "I", "Idle — disarm, back to the safe state."},
+    {"C", "C", "Clear latched errors / e-stop."},
+    {"M", "M", "Measure phase resistance & inductance (motor free, disarmed)."},
+    {"H", "H", "Hall-only: calibrate the hall sector angles (motor free, disarmed; spins ~10 s)."},
+    {"V<rad/s>", "V10", "Velocity setpoint — switches to velocity mode."},
+    {"T<Nm>", "T0.5", "Torque setpoint — switches to torque mode."},
+    {"X<rad>", "X3.14", "Position setpoint — switches to position mode."},
+    {"KP<v>", "KP0.3", "Velocity PID proportional gain (Nm per rad/s)."},
+    {"KI<v>", "KI2", "Velocity PID integral gain."},
+    {"KD<v>", "KD0", "Velocity PID derivative gain."},
+    {"K", "K", "Re-apply and print the current velocity PID gains."},
+    {"JP<v>", "JP1.0", "Current PID proportional gain (V per A)."},
+    {"JI<v>", "JI50", "Current PID integral gain."},
+    {"JD<v>", "JD0", "Current PID derivative gain."},
+    {"PP<v>", "PP1.0", "Position PID proportional gain (same as G)."},
+    {"PI<v>", "PI0", "Position PID integral gain."},
+    {"PD<v>", "PD0", "Position PID derivative gain."},
+    {"LC<A>", "LC5", "Current limit (A), clamped to CFG_CURRENT_LIMIT_MAX."},
+    {"LV<rad/s>", "LV20", "Velocity limit (rad/s), clamped to CFG_VEL_LIMIT_MAX."},
+    {"G<v>", "G1.0", "Position controller P gain (alias of PP)."},
+    {"Q", "Q", "Dump the live config as a 'cfg …' line (used by Motor Config & PID Tuner)."},
 };
 
-enum Column { ColCmd, ColExample, ColDesc, ColAction, ColCount };
+enum Column { ColCmd, ColExample, ColDesc, ColCount };
 
 } // namespace
 
+// Page de RÉFÉRENCE uniquement : aucun bouton, aucune connexion au port série.
+// Les commandes se tapent dans la boîte "Serial Commands" du Live Plotter.
+// Sans widget dans les cellules, la table reste un simple modèle -> pas de
+// hiérarchie de QPushButton à poser/redessiner à chaque changement de page.
 CheatSheetPage::CheatSheetPage(QWidget *parent) : QWidget(parent)
 {
     auto *layout = new QVBoxLayout(this);
 
     auto *intro = new QLabel(QStringLiteral(
-        "Serial commands accepted by the firmware. Type any of these in the "
-        "Live Plotter command box, or use the Send buttons here for the "
-        "argument-less ones. Values use rad, rad/s, Nm and A."));
+        "Serial commands accepted by the firmware — reference only. Type any of "
+        "these in the Live Plotter command box. Values use rad, rad/s, Nm and A."));
     intro->setWordWrap(true);
     layout->addWidget(intro);
 
@@ -65,8 +64,7 @@ CheatSheetPage::CheatSheetPage(QWidget *parent) : QWidget(parent)
     auto *table = new QTableWidget(rows, ColCount, this);
     table->setHorizontalHeaderLabels({QStringLiteral("Command"),
                                       QStringLiteral("Example"),
-                                      QStringLiteral("Description"),
-                                      QString()});
+                                      QStringLiteral("Description")});
     table->verticalHeader()->setVisible(false);
     table->setSelectionMode(QAbstractItemView::NoSelection);
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -74,7 +72,6 @@ CheatSheetPage::CheatSheetPage(QWidget *parent) : QWidget(parent)
     table->horizontalHeader()->setSectionResizeMode(ColCmd, QHeaderView::ResizeToContents);
     table->horizontalHeader()->setSectionResizeMode(ColExample, QHeaderView::ResizeToContents);
     table->horizontalHeader()->setSectionResizeMode(ColDesc, QHeaderView::Stretch);
-    table->horizontalHeader()->setSectionResizeMode(ColAction, QHeaderView::ResizeToContents);
 
     auto mono = [](QTableWidgetItem *it) {
         QFont f = it->font();
@@ -91,16 +88,6 @@ CheatSheetPage::CheatSheetPage(QWidget *parent) : QWidget(parent)
         table->setItem(r, ColCmd, mono(new QTableWidgetItem(QString::fromUtf8(c.command))));
         table->setItem(r, ColExample, mono(new QTableWidgetItem(QString::fromUtf8(c.example))));
         table->setItem(r, ColDesc, new QTableWidgetItem(QString::fromUtf8(c.description)));
-        if (c.sendable) {
-            auto *btn = new QPushButton(QStringLiteral("Send %1").arg(QString::fromUtf8(c.command)));
-            const QString cmd = QString::fromUtf8(c.command);
-            connect(btn, &QPushButton::clicked, this, [cmd] {
-                auto &bridge = SerialBridge::instance();
-                if (bridge.isConnected())
-                    bridge.writeLine(cmd);
-            });
-            table->setCellWidget(r, ColAction, btn);
-        }
     }
     table->resizeRowsToContents();
     layout->addWidget(table, 1);

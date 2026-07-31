@@ -1,6 +1,7 @@
 #include "mainview.h"
 #include "liveplot.h"
 #include "serialbridge.h"
+#include "telemetry.h"
 #include "telemetryhub.h"
 
 #include <QCheckBox>
@@ -23,6 +24,12 @@
 
 #include <array>
 #include <utility>
+
+namespace {
+// ~1.5 h of telemetry at 10 Hz. Past this the oldest lines are dropped, so a
+// session left running overnight can't exhaust the WASM heap.
+constexpr size_t kMaxLogRows = 50000;
+} // namespace
 
 MainView::MainView(double windowS, QWidget *parent) : QWidget(parent)
 {
@@ -269,17 +276,25 @@ void MainView::setSidePanelVisible(bool visible)
 
 // ------------------------------------------------------------- telemetry --
 
+void MainView::appendLogRow(const QString &raw)
+{
+    m_logRows.push_back(raw);
+    while (m_logRows.size() > kMaxLogRows)
+        m_logRows.pop_front();
+}
+
 void MainView::onTelemetry(double tSec, const std::array<double, kNumChannels> &vals,
                            const QString &raw, const QHash<QString, double> &fields)
 {
+    Q_UNUSED(fields);   // re-parsed on export; see appendLogRow
     m_plot->addSample(tSec, vals);
-    m_logRows.push_back({raw, fields});
+    appendLogRow(raw);
 }
 
 void MainView::onMessage(const QString &raw)
 {
     m_logView->appendPlainText(raw);
-    m_logRows.push_back({raw, {}});
+    appendLogRow(raw);
 }
 
 void MainView::onConnectionChanged(bool connected, const QString &message)
@@ -404,17 +419,26 @@ void MainView::clearAll()
 
 void MainView::onSaveCsv()
 {
-    const QStringList headers = {"raw_line", "t", "mode", "tgt", "Iq", "vel", "pos", "Vbus"};
+    // Columns follow the shared schema, so a channel added there is exported
+    // without touching this function.
+    QStringList headers = {QStringLiteral("raw_line"), QStringLiteral("t"),
+                           QStringLiteral("mode")};
+    for (int ch = 0; ch < kNumChannels; ++ch)
+        headers << QString::fromLatin1(kChannels[ch].primaryKey);
+
     QString csv = headers.join(QLatin1Char(',')) + QLatin1Char('\n');
-    for (const LogRow &row : m_logRows) {
-        QString escaped = row.raw;
+    for (const QString &raw : m_logRows) {
+        // Parsing here rather than storing the fields per line: this runs once,
+        // on demand, instead of on every line for the whole session.
+        const QHash<QString, double> fields = telemetry::parseLine(raw);
+        QString escaped = raw;
         escaped.replace(QLatin1Char('"'), QStringLiteral("\"\""));
         csv += QLatin1Char('"') + escaped + QLatin1Char('"');
         for (int i = 1; i < headers.size(); ++i) {
             csv += QLatin1Char(',');
             const QString key = headers.at(i);
-            if (row.fields.contains(key))
-                csv += QString::number(row.fields.value(key));
+            if (fields.contains(key))
+                csv += QString::number(fields.value(key));
         }
         csv += QLatin1Char('\n');
     }

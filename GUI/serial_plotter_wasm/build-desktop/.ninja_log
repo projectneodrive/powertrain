@@ -59,3 +59,17 @@
 3684	13613	8071917813727735	CMakeFiles/serial_plotter_wasm.dir/serial_plotter_wasm_autogen/mocs_compilation.cpp.obj	a4ab89a01aeacb6d
 3731	20035	8071917814199922	CMakeFiles/serial_plotter_wasm.dir/src/mainview.cpp.obj	f737e64b6c2da1a3
 20036	21273	8071917977235719	serial_plotter_wasm.exe	7e5020568b61cf7a
+37	2852	8071933495080039	serial_plotter_wasm_autogen/timestamp	1763eed0d7554591
+37	2852	8071933495080039	serial_plotter_wasm_autogen/mocs_compilation.cpp	1763eed0d7554591
+37	2852	8071933495080039	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop/serial_plotter_wasm_autogen/timestamp	1763eed0d7554591
+37	2852	8071933495080039	C:/Users/horth/Documents/neodrive/powertrain/GUI/serial_plotter_wasm/build-desktop/serial_plotter_wasm_autogen/mocs_compilation.cpp	1763eed0d7554591
+2898	10951	8071933496807896	CMakeFiles/serial_plotter_wasm.dir/src/demosource.cpp.obj	478a50566710c681
+2915	12182	8071933497069742	CMakeFiles/serial_plotter_wasm.dir/src/telemetryhub.cpp.obj	589b7c5ed8f341d8
+2867	13064	8071933496587611	CMakeFiles/serial_plotter_wasm.dir/src/main.cpp.obj	4a0fca7386d282f2
+2983	13324	8071933497749917	CMakeFiles/serial_plotter_wasm.dir/src/cheatsheetpage.cpp.obj	3c6ee1d5c6f54788
+2881	15378	8071933496723241	CMakeFiles/serial_plotter_wasm.dir/src/plotwindow.cpp.obj	e4269c03c92b9179
+2968	15710	8071933497595618	CMakeFiles/serial_plotter_wasm.dir/src/configpage.cpp.obj	b56940041b3bea2b
+2855	15963	8071933496439114	CMakeFiles/serial_plotter_wasm.dir/serial_plotter_wasm_autogen/mocs_compilation.cpp.obj	a4ab89a01aeacb6d
+2933	16618	8071933497234274	CMakeFiles/serial_plotter_wasm.dir/src/liveplot.cpp.obj	f793d0dec659768
+2951	21303	8071933497422057	CMakeFiles/serial_plotter_wasm.dir/src/mainview.cpp.obj	f737e64b6c2da1a3
+21303	22067	8071933680949753	serial_plotter_wasm.exe	7e5020568b61cf7a

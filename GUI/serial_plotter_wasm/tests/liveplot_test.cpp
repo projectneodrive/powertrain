@@ -6,11 +6,16 @@
 #include "liveplot.h"
 
 #include <QApplication>
+#include <QColor>
+#include <QElapsedTimer>
 #include <QImage>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QScrollBar>
 #include <QSplitter>
+#include <QtCharts/QChart>
+#include <QtCharts/QChartView>
+#include <QtCharts/QXYSeries>
 
 #include <algorithm>
 #include <array>
@@ -37,6 +42,16 @@ static std::vector<QLabel *> headers(QWidget *root)
         return a->mapToGlobal(QPoint(0, 0)).y() < b->mapToGlobal(QPoint(0, 0)).y();
     });
     return hs;
+}
+
+// LivePlot defers its repaint onto a single-shot timer, so processEvents()
+// alone returns before it has fired -- the loop has to actually run for a while.
+static void settle(QApplication &app, int ms = 200)
+{
+    QElapsedTimer t;
+    t.start();
+    while (t.elapsed() < ms)
+        app.processEvents(QEventLoop::AllEvents, 10);
 }
 
 static void sendMouse(QWidget *w, QEvent::Type type, QPoint global, Qt::MouseButtons buttons)
@@ -73,7 +88,7 @@ int main(int argc, char **argv)
             v[c] = std::sin(t + c) * (c + 3);        // distinct ranges per chart
         plot.addSample(t, v);
     }
-    app.processEvents();
+    settle(app);        // let the coalesced redraw run before grabbing pixels
     {
         QWidget *content = plot.widget();
         const QImage img = content->grab().toImage();   // grab() forces a paint
@@ -190,6 +205,70 @@ int main(int argc, char **argv)
         app.processEvents();
         check(plot.isChannelVisible(0), "re-shown channel reports visible");
         check(visibleHeaders() == before, "re-showing a channel restores its row");
+    }
+
+    // addSample() no longer repaints inline -- it coalesces onto a ~50 ms timer
+    // so a burst of lines costs one rebuild instead of one per sample. That is
+    // invisible to the layout checks above, so it gets its own coverage: a
+    // timer that never fires would silently freeze every chart.
+    std::printf("Coalesced redraw:\n");
+    {
+        // Look the series up by the channel's colour: the drag-reorder test
+        // above reparents the rows, so child order no longer tracks channel
+        // index, but each series keeps the colour it was built with.
+        auto seriesPoints = [&](int channel) -> int {
+            const QColor want(QString::fromLatin1(kChannels[channel].color));
+            for (QChartView *v : plot.findChildren<QChartView *>())
+                for (auto *s : v->chart()->series())
+                    if (auto *xy = qobject_cast<QXYSeries *>(s))
+                        if (xy->color() == want)
+                            return int(xy->count());
+            return -1;
+        };
+
+        plot.clear();
+        plot.setWindow(20.0);
+        for (int i = 0; i < 100; ++i) {
+            std::array<double, kNumChannels> v{};
+            for (int c = 0; c < kNumChannels; ++c)
+                v[c] = std::sin(i * 0.1 + c);
+            plot.addSample(i * 0.1, v);
+        }
+        check(seriesPoints(0) <= 0, "no repaint happens inline (still empty right after)");
+        settle(app);
+        check(seriesPoints(0) == 100, "the coalesced redraw lands every sample");
+
+        // Hidden charts are skipped by redraw() entirely; showing one again has
+        // to refill it from history rather than wait for the next sample.
+        plot.setChannelVisible(1, false);
+        settle(app);
+        for (int i = 100; i < 150; ++i) {
+            std::array<double, kNumChannels> v{};
+            for (int c = 0; c < kNumChannels; ++c)
+                v[c] = std::sin(i * 0.1 + c);
+            plot.addSample(i * 0.1, v);
+        }
+        settle(app);
+        const int hidden = seriesPoints(1);
+        check(hidden == 100, "a hidden channel is not rebuilt");
+        plot.setChannelVisible(1, true);
+        settle(app);
+        check(seriesPoints(1) == seriesPoints(0), "re-showing a channel refills it from history");
+
+        // Long windows decimate: past kMaxPointsPerSeries the extra vertices
+        // cost time and land on pixels that are already drawn.
+        plot.clear();
+        plot.setWindow(300.0);
+        for (int i = 0; i < 3000; ++i) {
+            std::array<double, kNumChannels> v{};
+            for (int c = 0; c < kNumChannels; ++c)
+                v[c] = std::sin(i * 0.1 + c);
+            plot.addSample(i * 0.1, v);
+        }
+        settle(app);
+        const int pts = seriesPoints(0);
+        std::printf("  (3000 samples in window -> %d points drawn)\n", pts);
+        check(pts > 0 && pts <= 1300, "a long window is decimated, not drawn in full");
     }
 
     std::printf(failures ? "\nFAILED (%d)\n" : "\nALL PASSED\n", failures);

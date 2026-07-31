@@ -5,8 +5,8 @@
 
 #include <QHash>
 #include <QString>
-#include <QVector>
 #include <array>
+#include <deque>
 
 #include <QWidget>
 
@@ -63,11 +63,12 @@ private:
     void setStatus(const QString &text);
     QString setpointPrefix() const;
 
-    struct LogRow {
-        QString raw;
-        QHash<QString, double> fields;
-    };
-    QVector<LogRow> m_logRows;
+    // Raw lines only, re-parsed when exporting. Keeping the parsed QHash here
+    // meant allocating ~10 QString keys per telemetry line, forever -- the main
+    // source of the WASM build's memory churn. Bounded so a long session can't
+    // grow without limit; the oldest lines fall off the front.
+    void appendLogRow(const QString &raw);
+    std::deque<QString> m_logRows;
     bool m_wasConnected = false;
 
     QWidget *m_leftColumn = nullptr;

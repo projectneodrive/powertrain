@@ -38,7 +38,9 @@ serial_plotter_wasm_autogen/timestamp: \
 	C:/Program\ Files/CMake/share/cmake-4.2/Modules/Platform/Windows.cmake \
 	C:/Program\ Files/CMake/share/cmake-4.2/Modules/Platform/WindowsPaths.cmake \
 	C:/Qt/6.8.3/mingw_64/include/QtCore/QHash \
+	C:/Qt/6.8.3/mingw_64/include/QtCore/QList \
 	C:/Qt/6.8.3/mingw_64/include/QtCore/QObject \
+	C:/Qt/6.8.3/mingw_64/include/QtCore/QPointF \
 	C:/Qt/6.8.3/mingw_64/include/QtCore/QString \
 	C:/Qt/6.8.3/mingw_64/include/QtCore/QTimer \
 	C:/Qt/6.8.3/mingw_64/include/QtCore/QVector \

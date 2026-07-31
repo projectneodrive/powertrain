@@ -89,14 +89,13 @@ void DemoSource::tick()
     brk = std::max(0.0, std::min(brk, kMaxDuty));
     const double ibrk = brk * vbus / 2.0;     // CFG_BRAKE_R = 2 ohms
 
-    // Sensorless observer health (mirrors HybridSensor): obsΔV stays ~0 (a bit
-    // noisier at low speed), blend ramps 0->1 across the 5..7 rad/s crossover.
-    const double av    = std::abs(m_vel);
-    const double blnd  = (av <= 5.0) ? 0.0 : (av >= 7.0 ? 1.0 : (av - 5.0) / 2.0);
-    const double obsdV = noise(0.05) + 0.3 * std::exp(-av / 1.5) * std::sin(m_ms / 250.0);
+    // Sensorless observer blend (mirrors HybridSensor): ramps 0->1 across the
+    // 5..7 rad/s crossover.
+    const double av   = std::abs(m_vel);
+    const double blnd = (av <= 5.0) ? 0.0 : (av >= 7.0 ? 1.0 : (av - 5.0) / 2.0);
 
     QString line = QStringLiteral("t=%1 #%2 mode=1 tgt=%3 Iq=%4 vel=%5 pos=%6 Vbus=%7 "
-                                  "Irgn=%8 Ibrk=%9 brk=%10 obsdV=%11 blnd=%12 RUN\n")
+                                  "Irgn=%8 Ibrk=%9 blnd=%10 RUN\n")
                        .arg(m_ms)
                        .arg(m_beat++)
                        .arg(m_tgt, 0, 'f', 2)
@@ -106,8 +105,6 @@ void DemoSource::tick()
                        .arg(vbus, 0, 'f', 1)
                        .arg(irgn, 0, 'f', 2)
                        .arg(ibrk, 0, 'f', 2)
-                       .arg(brk, 0, 'f', 2)
-                       .arg(obsdV, 0, 'f', 2)
                        .arg(blnd, 0, 'f', 2);
 
     // Occasional non-telemetry line, so the serial monitor pane gets exercised

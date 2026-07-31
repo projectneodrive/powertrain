@@ -65,6 +65,20 @@ PlotWindow::PlotWindow(double windowS, QWidget *parent) : QMainWindow(parent)
     m_baudSpin->setValue(115200);
     m_baudSpin->setToolTip(QStringLiteral("Baud (ignored by USB CDC, but Web Serial needs a value)"));
     m_connectButton = new QPushButton(QStringLiteral("Connect (USB)"));
+    m_connectButton->setToolTip(QStringLiteral("Connect / disconnect the board (F2 or Ctrl+K)"));
+
+    // Raccourci connexion/déconnexion. Deux séquences : F2 passe partout, alors
+    // que Ctrl+K est intercepté par la barre d'adresse de certains navigateurs
+    // -- en WASM on ne peut pas le reprendre, d'où le doublon.
+    // ApplicationShortcut : marche quelle que soit la page affichée, y compris
+    // quand le focus est dans un champ de saisie.
+    m_connectAction = new QAction(QStringLiteral("Connect / Disconnect"), this);
+    m_connectAction->setShortcuts({QKeySequence(Qt::Key_F2),
+                                   QKeySequence(QStringLiteral("Ctrl+K"))});
+    m_connectAction->setShortcutContext(Qt::ApplicationShortcut);
+    connect(m_connectAction, &QAction::triggered, this, &PlotWindow::onConnectClicked);
+    addAction(m_connectAction);
+
     m_demoCheck = new QCheckBox(QStringLiteral("Demo"));
     m_demoCheck->setToolTip(QStringLiteral("Synthetic telemetry, no hardware"));
     toolbar->addWidget(new QLabel(QStringLiteral(" Baud ")));
@@ -132,6 +146,7 @@ void PlotWindow::onDemoToggled(bool on)
     else
         m_demo->stop();
     m_connectButton->setEnabled(!on);
+    m_connectAction->setEnabled(!on);   // le raccourci suit l'état du bouton
     m_statusLabel->setText(on ? QStringLiteral("Demo mode — synthetic telemetry ")
                               : QStringLiteral("Demo stopped "));
 }
@@ -140,6 +155,8 @@ void PlotWindow::onStatusChanged(bool connected, const QString &message)
 {
     m_connectButton->setText(connected ? QStringLiteral("Disconnect")
                                        : QStringLiteral("Connect (USB)"));
+    m_connectAction->setText(connected ? QStringLiteral("Disconnect")
+                                       : QStringLiteral("Connect / Disconnect"));
     m_baudSpin->setEnabled(!connected);
     m_demoCheck->setEnabled(!connected);
     m_statusLabel->setText(message + QLatin1Char(' '));

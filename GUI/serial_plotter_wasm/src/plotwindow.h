@@ -50,6 +50,7 @@ private:
     QSpinBox *m_baudSpin = nullptr;
     QCheckBox *m_demoCheck = nullptr;
     QPushButton *m_connectButton = nullptr;
+    QAction *m_connectAction = nullptr;      // porte le raccourci clavier
     QAction *m_togglePanelAction = nullptr;
     QLabel *m_statusLabel = nullptr;
 };

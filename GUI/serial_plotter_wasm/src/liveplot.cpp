@@ -24,6 +24,14 @@ namespace {
 
 constexpr double kMaxHistoryS = 300.0;   // hard cap on retained samples
 constexpr int kHeaderHeight = 20;
+// Repaint at most every 50 ms (20 fps). The firmware streams at 10 Hz, but
+// several lines can surface from one serial read -- without this, each one
+// triggered a full rebuild of every chart.
+constexpr int kRedrawIntervalMs = 50;
+// Upper bound on points pushed into a single series. A chart is a few hundred
+// pixels wide, so beyond this the extra vertices cost time and show nothing;
+// at 10 Hz it only engages past a ~120 s window.
+constexpr int kMaxPointsPerSeries = 1200;
 // A chart can be dragged this small (leaves room for the axis labels) -- the
 // low minimum is what gives the splitter slack to actually resize.
 constexpr int kMinChartHeight = 80;
@@ -67,6 +75,11 @@ LivePlot::LivePlot(QWidget *parent) : QScrollArea(parent)
     setFrameShape(QFrame::NoFrame);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
+    m_visible.fill(true);
+    m_redrawTimer.setSingleShot(true);
+    m_redrawTimer.setInterval(kRedrawIntervalMs);
+    connect(&m_redrawTimer, &QTimer::timeout, this, &LivePlot::redraw);
+
     // A vertical splitter makes each graph individually resizable: drag the
     // handle between two charts to change their heights. It still scrolls when
     // the viewport is shorter than the charts' combined minimum.
@@ -84,6 +97,9 @@ LivePlot::LivePlot(QWidget *parent) : QScrollArea(parent)
 
         auto *chart = new QChart;
         chart->legend()->hide();
+        // Explicit: an animated series re-tweens on every replace(), which at
+        // 10 Hz is pure wasted work.
+        chart->setAnimationOptions(QChart::NoAnimation);
         chart->addSeries(series);
         // Axis tick labels are drawn INSIDE these margins, so the left/bottom
         // must be wide enough or the scale gets clipped (the original bug). We
@@ -169,7 +185,13 @@ void LivePlot::setChannelVisible(int channel, bool visible)
             break;
         }
     }
+    if (channel >= 0 && channel < kNumChannels)
+        m_visible[channel] = visible;
     updateSplitterMinHeight();
+    // A chart that was hidden stopped being updated, so it must be refilled
+    // from history before it is shown again.
+    if (visible)
+        redraw();
 }
 
 bool LivePlot::isChannelVisible(int channel) const
@@ -267,11 +289,18 @@ void LivePlot::addSample(double tSec, const std::array<double, kNumChannels> &va
     while (!m_samples.empty() && m_samples.front().t < cutoff)
         m_samples.pop_front();
 
-    redraw();
+    scheduleRedraw();
+}
+
+void LivePlot::scheduleRedraw()
+{
+    if (!m_redrawTimer.isActive())
+        m_redrawTimer.start();
 }
 
 void LivePlot::redraw()
 {
+    m_redrawTimer.stop();       // a direct call satisfies any pending request
     if (m_samples.empty())
         return;
 
@@ -281,16 +310,33 @@ void LivePlot::redraw()
     auto it = std::lower_bound(m_samples.begin(), m_samples.end(), tStart,
                                [](const Sample &s, double v) { return s.t < v; });
 
-    std::array<QList<QPointF>, kNumChannels> points;
+    // Decimate when the window holds far more samples than a chart can show.
+    const auto inWindow = m_samples.end() - it;
+    int stride = 1;
+    if (inWindow > kMaxPointsPerSeries)
+        stride = int((inWindow + kMaxPointsPerSeries - 1) / kMaxPointsPerSeries);
+
     std::array<double, kNumChannels> yMin;
     std::array<double, kNumChannels> yMax;
     yMin.fill(std::numeric_limits<double>::max());
     yMax.fill(std::numeric_limits<double>::lowest());
+    for (int ch = 0; ch < kNumChannels; ++ch)
+        if (m_visible[ch])
+            m_pointBuf[ch].clear();     // keeps the capacity -> no realloc
 
-    for (auto s = it; s != m_samples.end(); ++s) {
+    // Single pass over the window, touching visible channels only. Note that
+    // yMin/yMax come from the decimated set, so the autoscale matches what is
+    // actually drawn rather than clipping it.
+    long long idx = 0;
+    for (auto s = it; s != m_samples.end(); ++s, ++idx) {
+        const bool last = (s + 1 == m_samples.end());
+        if (stride > 1 && (idx % stride) != 0 && !last)
+            continue;               // always keep the newest point
         for (int ch = 0; ch < kNumChannels; ++ch) {
+            if (!m_visible[ch])
+                continue;
             const double y = s->v[ch];
-            points[ch].append(QPointF(s->t, y));
+            m_pointBuf[ch].append(QPointF(s->t, y));
             yMin[ch] = std::min(yMin[ch], y);
             yMax[ch] = std::max(yMax[ch], y);
         }
@@ -299,7 +345,9 @@ void LivePlot::redraw()
     const double xLo = std::max(0.0, tStart);
     const double xHi = std::max(m_windowS, tLast);
     for (int ch = 0; ch < kNumChannels; ++ch) {
-        m_series[ch]->replace(points[ch]);
+        if (!m_visible[ch])
+            continue;
+        m_series[ch]->replace(m_pointBuf[ch]);
         m_axX[ch]->setRange(xLo, xHi);
         double lo = yMin[ch];
         double hi = yMax[ch];
@@ -313,9 +361,11 @@ void LivePlot::redraw()
 
 void LivePlot::clear()
 {
+    m_redrawTimer.stop();
     m_samples.clear();
     m_haveT0 = false;
     for (int ch = 0; ch < kNumChannels; ++ch) {
+        m_pointBuf[ch].clear();
         m_series[ch]->clear();
         m_axX[ch]->setRange(0.0, m_windowS);
         m_axY[ch]->setRange(-1.0, 1.0);

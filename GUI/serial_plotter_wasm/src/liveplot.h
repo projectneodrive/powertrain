@@ -7,7 +7,10 @@
 // header that doubles as a drag handle to reorder the charts.
 #pragma once
 
+#include <QList>
+#include <QPointF>
 #include <QScrollArea>
+#include <QTimer>
 #include <array>
 #include <deque>
 #include <vector>
@@ -45,6 +48,7 @@ protected:
 
 private:
     void redraw();
+    void scheduleRedraw();      // coalesce bursts into one repaint
     void moveRow(int from, int to);
     int rowIndexOfHeader(const QObject *header) const;
     void updateSplitterMinHeight();   // size for the currently visible rows
@@ -71,6 +75,18 @@ private:
     std::array<QLineSeries *, kNumChannels> m_series{};
     std::array<QValueAxis *, kNumChannels> m_axX{};
     std::array<QValueAxis *, kNumChannels> m_axY{};
+
+    // --- repaint budget ----------------------------------------------------
+    // Telemetry arrives in bursts (several lines can be decoded from a single
+    // serial read). Repainting every chart per sample is what made the WASM
+    // build sluggish, so redraws are coalesced onto this timer instead.
+    QTimer m_redrawTimer;
+    // Point buffers kept alive across redraws: clear() keeps the capacity, so
+    // the steady state does no allocation at all.
+    std::array<QList<QPointF>, kNumChannels> m_pointBuf;
+    // Mirrors the checkbox state -- hidden charts are skipped entirely rather
+    // than being rebuilt and replaced into an invisible series.
+    std::array<bool, kNumChannels> m_visible;
 
     // Drag-reorder state.
     int m_dragRow = -1;
