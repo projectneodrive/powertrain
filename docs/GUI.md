@@ -48,9 +48,12 @@ and log are shared across all of them.
 - **Live Plotter** — the command console. Type any serial command (see the
   Commands page), set the time window, export the log to CSV.
 - **PID Tuner** — live closed-loop control: arm/idle, clear errors, pick
-  Velocity/Torque/Position mode, push a setpoint, and edit KP/KI/KD while
-  watching the response. Live Plotter and PID Tuner **share the same graphs** —
-  switching between them only swaps the left panel.
+  Velocity/Torque/Position mode, push a setpoint, and edit the **velocity,
+  current and position** PID gains (KP/KI/KD each) while watching the response.
+  **Read from board (Q)** loads the live configuration — it fills every gain box
+  and shows a summary of the limits and all three PID loops. Live Plotter and
+  PID Tuner **share the same graphs** — switching between them only swaps the
+  left panel.
 - **Motor Config** — a table of motor parameters. **Read from board (Q)** pulls
   the live values; the writable rows (current/velocity limit, position gain,
   velocity PID) can be edited and pushed back with **Apply changes**. Hardware

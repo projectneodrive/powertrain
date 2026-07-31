@@ -31,4 +31,5 @@ private:
     double m_vel = 0.0;
     double m_pos = 0.0;
     double m_iq = 0.0;
+    bool m_brakeOn = false;  // état de l'hystérésis du chopper (cf. brake.cpp)
 };

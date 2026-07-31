@@ -16,6 +16,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -78,6 +79,7 @@ MainView::MainView(double windowS, QWidget *parent) : QWidget(parent)
     auto &hub = TelemetryHub::instance();
     connect(&hub, &TelemetryHub::telemetry, this, &MainView::onTelemetry);
     connect(&hub, &TelemetryHub::message, this, &MainView::onMessage);
+    connect(&hub, &TelemetryHub::configReceived, this, &MainView::onConfigReceived);
     connect(&SerialBridge::instance(), &SerialBridge::statusChanged,
             this, &MainView::onConnectionChanged);
 }
@@ -190,8 +192,8 @@ QWidget *MainView::buildTunerPanel()
     spLayout->addWidget(applyButton, 2, 0);
     spLayout->addWidget(stopButton, 2, 1);
 
-    auto *pidGroup = new QGroupBox(QStringLiteral("Velocity PID gains"));
-    auto *pidLayout = new QGridLayout(pidGroup);
+    // One PID group (KP/KI/KD spins + Apply) reused for the velocity, current
+    // and position loops. Apply sends the loop's command trio to the board.
     auto makeGain = [](int decimals, double step) {
         auto *s = new QDoubleSpinBox;
         s->setRange(0.0, 1000.0);
@@ -199,26 +201,49 @@ QWidget *MainView::buildTunerPanel()
         s->setSingleStep(step);
         return s;
     };
-    m_kpSpin = makeGain(4, 0.01);
-    m_kiSpin = makeGain(4, 0.01);
-    m_kdSpin = makeGain(5, 0.001);
-    auto *applyGainsButton = new QPushButton(QStringLiteral("Apply gains"));
-    pidLayout->addWidget(new QLabel(QStringLiteral("KP")), 0, 0);
-    pidLayout->addWidget(m_kpSpin, 0, 1);
-    pidLayout->addWidget(new QLabel(QStringLiteral("KI")), 1, 0);
-    pidLayout->addWidget(m_kiSpin, 1, 1);
-    pidLayout->addWidget(new QLabel(QStringLiteral("KD")), 2, 0);
-    pidLayout->addWidget(m_kdSpin, 2, 1);
-    pidLayout->addWidget(applyGainsButton, 3, 0, 1, 2);
-    auto *pidHint = new QLabel(QStringLiteral(
-        "Tip: read current gains on the Motor Config page (Q)."));
-    pidHint->setWordWrap(true);
-    pidHint->setStyleSheet(QStringLiteral("color:#666; font-size:11px;"));
-    pidLayout->addWidget(pidHint, 4, 0, 1, 2);
+    auto makeGainGroup = [this, &makeGain](
+            const QString &title, QDoubleSpinBox *&kp, QDoubleSpinBox *&ki,
+            QDoubleSpinBox *&kd, void (MainView::*applySlot)()) {
+        auto *group = new QGroupBox(title);
+        auto *g = new QGridLayout(group);
+        kp = makeGain(4, 0.01);
+        ki = makeGain(4, 0.01);
+        kd = makeGain(5, 0.001);
+        auto *applyBtn = new QPushButton(QStringLiteral("Apply"));
+        g->addWidget(new QLabel(QStringLiteral("KP")), 0, 0); g->addWidget(kp, 0, 1);
+        g->addWidget(new QLabel(QStringLiteral("KI")), 1, 0); g->addWidget(ki, 1, 1);
+        g->addWidget(new QLabel(QStringLiteral("KD")), 2, 0); g->addWidget(kd, 2, 1);
+        g->addWidget(applyBtn, 3, 0, 1, 2);
+        connect(applyBtn, &QPushButton::clicked, this, applySlot);
+        return group;
+    };
+
+    auto *velGroup = makeGainGroup(QStringLiteral("Velocity PID gains"),
+        m_kpSpin, m_kiSpin, m_kdSpin, &MainView::onApplyGains);
+    auto *curGroup = makeGainGroup(QStringLiteral("Current PID gains"),
+        m_curKpSpin, m_curKiSpin, m_curKdSpin, &MainView::onApplyCurrentGains);
+    auto *posGroup = makeGainGroup(QStringLiteral("Position PID gains"),
+        m_posKpSpin, m_posKiSpin, m_posKdSpin, &MainView::onApplyPositionGains);
+
+    // Read-back of the live config (serial Q): fills every spin above and shows
+    // a summary, so you can see exactly what's on the board before tuning.
+    auto *cfgGroup = new QGroupBox(QStringLiteral("Current configuration"));
+    auto *cfgLayout = new QVBoxLayout(cfgGroup);
+    auto *readCfgButton = new QPushButton(QStringLiteral("Read from board (Q)"));
+    m_configSummary = new QLabel(
+        QStringLiteral("Press “Read from board (Q)” to load the live values."));
+    m_configSummary->setWordWrap(true);
+    m_configSummary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_configSummary->setStyleSheet(QStringLiteral("color:#555; font-size:11px;"));
+    cfgLayout->addWidget(readCfgButton);
+    cfgLayout->addWidget(m_configSummary);
 
     layout->addWidget(armGroup);
     layout->addWidget(spGroup);
-    layout->addWidget(pidGroup);
+    layout->addWidget(cfgGroup);
+    layout->addWidget(velGroup);
+    layout->addWidget(curGroup);
+    layout->addWidget(posGroup);
     layout->addStretch(1);
 
     connect(armButton, &QPushButton::clicked, this, [this] { sendCommand(QStringLiteral("A")); });
@@ -227,7 +252,7 @@ QWidget *MainView::buildTunerPanel()
     connect(clearGraphButton, &QPushButton::clicked, this, &MainView::clearAll);
     connect(applyButton, &QPushButton::clicked, this, &MainView::onApplySetpoint);
     connect(stopButton, &QPushButton::clicked, this, &MainView::onStopSetpoint);
-    connect(applyGainsButton, &QPushButton::clicked, this, &MainView::onApplyGains);
+    connect(readCfgButton, &QPushButton::clicked, this, &MainView::onReadConfig);
 
     return panel;
 }
@@ -313,6 +338,60 @@ void MainView::onApplyGains()
     sendCommand(QStringLiteral("KP") + QString::number(m_kpSpin->value(), 'f', 4));
     sendCommand(QStringLiteral("KI") + QString::number(m_kiSpin->value(), 'f', 4));
     sendCommand(QStringLiteral("KD") + QString::number(m_kdSpin->value(), 'f', 5));
+}
+
+void MainView::onApplyCurrentGains()
+{
+    sendCommand(QStringLiteral("JP") + QString::number(m_curKpSpin->value(), 'f', 4));
+    sendCommand(QStringLiteral("JI") + QString::number(m_curKiSpin->value(), 'f', 4));
+    sendCommand(QStringLiteral("JD") + QString::number(m_curKdSpin->value(), 'f', 5));
+}
+
+void MainView::onApplyPositionGains()
+{
+    sendCommand(QStringLiteral("PP") + QString::number(m_posKpSpin->value(), 'f', 4));
+    sendCommand(QStringLiteral("PI") + QString::number(m_posKiSpin->value(), 'f', 4));
+    sendCommand(QStringLiteral("PD") + QString::number(m_posKdSpin->value(), 'f', 5));
+}
+
+void MainView::onReadConfig()
+{
+    sendCommand(QStringLiteral("Q"));
+}
+
+void MainView::onConfigReceived(const QHash<QString, double> &fields)
+{
+    // Fill each spin from the matching cfg field (leave it alone if absent, so an
+    // old firmware that omits a key doesn't zero the box). Block signals so
+    // populating doesn't look like a user edit.
+    auto setIf = [&](QDoubleSpinBox *s, const char *key) {
+        const QString k = QString::fromLatin1(key);
+        if (s && fields.contains(k)) {
+            QSignalBlocker block(s);
+            s->setValue(fields.value(k));
+        }
+    };
+    setIf(m_kpSpin, "vel_p");     setIf(m_kiSpin, "vel_i");     setIf(m_kdSpin, "vel_d");
+    setIf(m_curKpSpin, "cur_p");  setIf(m_curKiSpin, "cur_i");  setIf(m_curKdSpin, "cur_d");
+    setIf(m_posKpSpin, "pos_gain"); setIf(m_posKiSpin, "pos_i"); setIf(m_posKdSpin, "pos_d");
+
+    if (!m_configSummary)
+        return;
+    auto g = [&](const char *key, int dec) {
+        const QString k = QString::fromLatin1(key);
+        return fields.contains(k) ? QString::number(fields.value(k), 'f', dec)
+                                  : QStringLiteral("--");
+    };
+    m_configSummary->setText(
+        QStringLiteral("Limits:  current ") + g("current_limit", 2) +
+        QStringLiteral(" A   velocity ") + g("vel_limit", 2) + QStringLiteral(" rad/s\n") +
+        QStringLiteral("Velocity PID:  P ") + g("vel_p", 4) + QStringLiteral("  I ") +
+            g("vel_i", 4) + QStringLiteral("  D ") + g("vel_d", 5) + QStringLiteral("\n") +
+        QStringLiteral("Current PID:   P ") + g("cur_p", 4) + QStringLiteral("  I ") +
+            g("cur_i", 4) + QStringLiteral("  D ") + g("cur_d", 5) + QStringLiteral("\n") +
+        QStringLiteral("Position PID:  P ") + g("pos_gain", 4) + QStringLiteral("  I ") +
+            g("pos_i", 4) + QStringLiteral("  D ") + g("pos_d", 5));
+    setStatus(QStringLiteral("Config loaded from board"));
 }
 
 void MainView::clearAll()

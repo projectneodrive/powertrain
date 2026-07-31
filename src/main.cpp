@@ -380,6 +380,29 @@ static void applyControl() {
     Serial.print(" D=");          Serial.println(motor.PID_velocity.D, 5);
   }
 
+  // --- Gains PID courant (série JP/JI/JD) : appliqués tels quels aux deux axes
+  // (q et d) du régulateur de courant SimpleFOC. En V/A, pas de conversion Kt.
+  if (g_io.req_cur_gains) {
+    g_io.req_cur_gains = false;
+    motor.PID_current_q.P = g_io.cur_p_gain; motor.PID_current_d.P = g_io.cur_p_gain;
+    motor.PID_current_q.I = g_io.cur_int_gain; motor.PID_current_d.I = g_io.cur_int_gain;
+    motor.PID_current_q.D = g_io.cur_d_gain; motor.PID_current_d.D = g_io.cur_d_gain;
+    Serial.print("[PID cur] P="); Serial.print(motor.PID_current_q.P, 4);
+    Serial.print(" I=");          Serial.print(motor.PID_current_q.I, 4);
+    Serial.print(" D=");          Serial.println(motor.PID_current_q.D, 5);
+  }
+
+  // --- Gains I/D de position (série PI/PD). Le P (P_angle.P) est appliqué à
+  // chaque tour dans applyControl ; ici on ne pose que I et D (rarement utiles).
+  if (g_io.req_pos_gains) {
+    g_io.req_pos_gains = false;
+    motor.P_angle.I = g_io.pos_int_gain;
+    motor.P_angle.D = g_io.pos_d_gain;
+    Serial.print("[PID pos] P="); Serial.print(motor.P_angle.P, 4);
+    Serial.print(" I=");          Serial.print(motor.P_angle.I, 4);
+    Serial.print(" D=");          Serial.println(motor.P_angle.D, 5);
+  }
+
   // Sécurité globale simplifiée (la SafetyTask gère le hardware)
   bool safe = !g_io.estop && !g_fault;
 
@@ -641,16 +664,22 @@ static void CommsTask(void *) {
 }
 
 // Dump de la configuration courante sur une seule ligne préfixée "cfg " pour
-// que le GUI la distingue de la télémétrie ("t=..."). Les 6 premiers champs
-// sont réglables via série (LC/LV/G puis KP/KI/KD) ; les suivants sont des
-// constantes matérielles compile-time, en lecture seule côté GUI.
+// que le GUI la distingue de la télémétrie ("t=..."). Les champs de limites et
+// de gains sont réglables via série (LC/LV ; pos PP/PI/PD ; vitesse KP/KI/KD ;
+// courant JP/JI/JD) ; les suivants sont des constantes matérielles compile-time,
+// en lecture seule côté GUI.
 static void reportConfig() {
   Serial.print("cfg current_limit="); Serial.print(motor.current_limit, 3);
   Serial.print(" vel_limit=");        Serial.print(motor.velocity_limit, 3);
   Serial.print(" pos_gain=");         Serial.print(motor.P_angle.P, 4);
+  Serial.print(" pos_i=");            Serial.print(motor.P_angle.I, 4);
+  Serial.print(" pos_d=");            Serial.print(motor.P_angle.D, 5);
   Serial.print(" vel_p=");            Serial.print(g_io.vel_gain, 4);
   Serial.print(" vel_i=");            Serial.print(g_io.vel_int_gain, 4);
   Serial.print(" vel_d=");            Serial.print(g_io.vel_d_gain, 5);
+  Serial.print(" cur_p=");            Serial.print(motor.PID_current_q.P, 4);
+  Serial.print(" cur_i=");            Serial.print(motor.PID_current_q.I, 4);
+  Serial.print(" cur_d=");            Serial.print(motor.PID_current_q.D, 5);
   Serial.print(" pole_pairs=");       Serial.print(CFG_POLE_PAIRS);
   Serial.print(" kv=");               Serial.print(CFG_KV, 2);
   Serial.print(" kt=");               Serial.print(CFG_KT, 4);
@@ -749,6 +778,64 @@ static void handleSerial() {
                 break;
             }
             g_io.req_vel_gains = true;
+            break;
+          }
+          case 'J': case 'j': {
+            // JP/JI/JD<val> : gains PID courant (V/A). 'J' seul ré-applique.
+            v = atof(buf + 2);
+            switch (buf[1]) {
+              case 'P': case 'p': {
+                float old = g_io.cur_p_gain;   g_io.cur_p_gain   = v;
+                Serial.print("AK JP: cur_p ");   Serial.print(old, 4);
+                Serial.print(" -> ");            Serial.println(v, 4);
+                break;
+              }
+              case 'I': case 'i': {
+                float old = g_io.cur_int_gain; g_io.cur_int_gain = v;
+                Serial.print("AK JI: cur_i ");   Serial.print(old, 4);
+                Serial.print(" -> ");            Serial.println(v, 4);
+                break;
+              }
+              case 'D': case 'd': {
+                float old = g_io.cur_d_gain;   g_io.cur_d_gain   = v;
+                Serial.print("AK JD: cur_d ");   Serial.print(old, 5);
+                Serial.print(" -> ");            Serial.println(v, 5);
+                break;
+              }
+              default:
+                Serial.println("AK J: reapply current gains");
+                break;
+            }
+            g_io.req_cur_gains = true;
+            break;
+          }
+          case 'P': case 'p': {
+            // PP/PI/PD<val> : gains PID position. PP == G (P_angle.P).
+            v = atof(buf + 2);
+            switch (buf[1]) {
+              case 'P': case 'p': {
+                float old = g_io.pos_gain;     g_io.pos_gain     = (v > 0.0f) ? v : 0.0f;
+                Serial.print("AK PP: pos_p ");   Serial.print(old, 4);
+                Serial.print(" -> ");            Serial.println(g_io.pos_gain, 4);
+                break;
+              }
+              case 'I': case 'i': {
+                float old = g_io.pos_int_gain; g_io.pos_int_gain = v;
+                Serial.print("AK PI: pos_i ");   Serial.print(old, 4);
+                Serial.print(" -> ");            Serial.println(v, 4);
+                break;
+              }
+              case 'D': case 'd': {
+                float old = g_io.pos_d_gain;   g_io.pos_d_gain   = v;
+                Serial.print("AK PD: pos_d ");   Serial.print(old, 5);
+                Serial.print(" -> ");            Serial.println(v, 5);
+                break;
+              }
+              default:
+                Serial.println("AK P: reapply position gains");
+                break;
+            }
+            g_io.req_pos_gains = true;
             break;
           }
           case 'L': case 'l': {
@@ -866,7 +953,6 @@ static void SerialTask(void *) {
     Serial.print(g_focReady ? " RUN" : (g_calibrated ? " idle" : " SAFE"));
     Serial.print(g_fault ? " [FAULT]" : "");
     if (g_io.axis_error) { Serial.print(" err=0x"); Serial.print(g_io.axis_error, HEX); }
-    if (brake::duty() > 0.0f) { Serial.print(" brk="); Serial.print(brake::duty(), 2); }
     Serial.print(" can_tx_ok=");   Serial.print(g_can.txOkCount());
     Serial.print(" can_tx_fail="); Serial.print(g_can.txFailCount());
     Serial.print(" can_rx=");      Serial.println(g_can.rxCount());
@@ -995,7 +1081,12 @@ void setup() {
   g_io.input_vel     = 0.0f;
   g_io.vel_limit     = CFG_VEL_LIMIT;
   g_io.current_limit = CFG_CURRENT_LIMIT;
-  g_io.pos_gain      = CFG_POS_P;   // miroir du gain P position (commande 'G')
+  g_io.pos_gain      = CFG_POS_P;   // miroir du gain P position (commande G/PP)
+  g_io.pos_int_gain  = CFG_POS_I;
+  g_io.pos_d_gain    = CFG_POS_D;
+  g_io.cur_p_gain    = CFG_CUR_P;   // miroirs des gains courant (V/A, sans Kt)
+  g_io.cur_int_gain  = CFG_CUR_I;
+  g_io.cur_d_gain    = CFG_CUR_D;
   // Miroirs des gains vitesse en Nm/(rad/s), inverse exact de l'application
   // dans applyControl() (les CFG_* sont en A/(rad/s), ou en V en fallback)
   {
@@ -1047,6 +1138,7 @@ void setup() {
 #else
   Serial.println("Serial cmds: A arm | I idle | V<rad/s> | T<Nm> | X<rad> pos | M charac R/L | C clear | KP/KI/KD<v> vel PID | K show");
 #endif
+  Serial.println("  gains:     KP/KI/KD<v> vel | JP/JI/JD<v> current | PP/PI/PD<v> position");
   Serial.println("  config:    LC<A> current-lim | LV<rad/s> vel-lim | G<v> pos-gain | Q dump config (cfg ...)");
   vTaskStartScheduler();
   for (;;) {}

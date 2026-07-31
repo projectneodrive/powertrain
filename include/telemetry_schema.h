@@ -35,6 +35,25 @@ TELEMETRY_CHANNEL(vel,   "Vel [rad/s]",   "#3b82f6", "",     2, g_io.vel_rev * T
 TELEMETRY_CHANNEL(pos,   "Pos [rad]",     "#a855f7", "",     2, g_io.pos_rev * TWO_PI)
 TELEMETRY_CHANNEL(Vbus,  "Vbus [V]",      "#ef4444", "vbus", 1, g_io.vbus)
 
+// --- Bilan énergétique du freinage ------------------------------------------
+// Irgn : courant que le MOTEUR renvoie dans le bus (g_io.ibus < 0 = génératrice).
+//        Tracé en positif pour se comparer directement à Ibrk. C'est l'énergie
+//        qu'il faut absorber quelque part.
+// Ibrk : courant moyen tiré par la résistance de freinage. C'est là qu'elle part.
+// brk  : duty du chopper — sert à régler CFG_BRAKE_GAIN (voir board_config.h).
+//
+// Irgn > Ibrk durablement => la capacité de bus se charge => Vbus monte : soit
+// augmenter CFG_BRAKE_GAIN, soit la résistance ne suffit pas.
+//
+// /!\ Ibrk est CALCULÉ (duty * Vbus / R), pas mesuré : la carte n'a aucun shunt
+// sur la branche AUX. Il indique le courant COMMANDÉ. Si le demi-pont AUX ne
+// conduit pas, la courbe monte quand même — c'est Vbus qui dit la vérité.
+TELEMETRY_CHANNEL(Irgn,  "Regen [A]",     "#06b6d4", "",     2,
+                  (g_io.ibus < 0.0f ? -g_io.ibus : 0.0f))
+TELEMETRY_CHANNEL(Ibrk,  "Brake [A]",     "#eab308", "",     2,
+                  (brake::duty() * g_io.vbus / CFG_BRAKE_R))
+TELEMETRY_CHANNEL(brk,   "Brake duty",    "#f59e0b", "",     2, brake::duty())
+
 // Sensorless flux-observer health (hall build only): obsdV (v_obs - v_hall)
 // should stay ~0; blnd is the observer fraction 0 (hall) .. 1 (sensorless).
 TELEMETRY_CHANNEL_HALL(obsdV, "obsdV [rad/s]", "#14b8a6", "", 2, hybrid.obs_dv)

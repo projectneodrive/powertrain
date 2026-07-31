@@ -221,6 +221,7 @@
 // Starting points — expect to bench-tune per motor.
 #define CFG_CUR_P          1.0f     // current PID P (V/A)
 #define CFG_CUR_I          50.0f   // current PID I
+#define CFG_CUR_D          0.0f    // current PID D (rarely used; tunable via JD)
 #define CFG_LPF_CUR_TF     0.01f   // current measurement low-pass (s)
 #define CFG_CHAR_VOLTAGE   1.0f     // voltage used by characteriseMotor() for R/L
 
@@ -292,14 +293,14 @@
 // moteur. P trop élevé amplifie le bruit de mesure hall -> Iq oscille et le
 // régen des à-coups peut faire fauter le bus (observé dès P=1.0) ; monter par
 // petits pas (+0.1).
-#define CFG_VEL_P        0.5f        // A/(rad/s)
+#define CFG_VEL_P        0.1f        // A/(rad/s)
 // I fixe le courant de croisière (Ti=P/I). Trop faible -> stick-slip au
 // décollage (le rotor colle puis décroche). Monter par paliers si le bas régime
 // accroche, baisser si ça dépasse/oscille en régime établi.
 #define CFG_VEL_I        0.05f       // A/(rad·s⁻¹·s)
 // D dérive le bruit hall directement dans Iq -> garder très bas (le lissage
 // multi-front de HallSensorSmoothVel traite déjà ce bruit à la source).
-#define CFG_VEL_D        0.0f
+#define CFG_VEL_D        0.0001f
 // Pente max du COURANT de sortie du PID (A/s). Une rampe large accélère aussi
 // le renversement de couple en freinage -> pic de tension bus plus rapide.
 #define CFG_VEL_RAMP     30.0f      // PID output ramp (A/s)
@@ -312,6 +313,8 @@
 // pour une réponse plus vive. 0 = échelon direct.
 #define CFG_VEL_ACCEL    10.0f      // rad/s²  (0 = pas de rampe de consigne)
 #define CFG_POS_P        1.0f       // position P gain ((rad/s)/rad)
+#define CFG_POS_I        0.0f       // position I gain (tunable via PI; usually 0)
+#define CFG_POS_D        0.0f       // position D gain (tunable via PD; usually 0)
 // Passe-bas sur la vitesse mesurée (s). Trop grand ajoute du retard de boucle
 // -> oscillation entretenue (cycle limite ~5 Hz vu à 0.15s). Le lissage
 // principal est fait par CFG_HALL_VEL_WINDOW ; ce filtre reste léger.

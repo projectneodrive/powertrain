@@ -45,10 +45,12 @@ The Config and PID pages rely on serial commands added to
 |---------|---------|
 | `LC<A>` | set current limit (clamped to `CFG_CURRENT_LIMIT_MAX`) |
 | `LV<rad/s>` | set velocity limit (clamped to `CFG_VEL_LIMIT_MAX`) |
-| `G<val>` | set position P gain |
+| `G<val>` | set position P gain (alias of `PP`) |
 | `X<rad>` | position setpoint (enters position mode) |
-| `KP/KI/KD<val>` | velocity PID gains (pre-existing) |
-| `Q` | dump the live config as one `cfg key=val …` line for the Config page |
+| `KP/KI/KD<val>` | velocity PID gains |
+| `JP/JI/JD<val>` | current PID gains (V/A) |
+| `PP/PI/PD<val>` | position PID gains |
+| `Q` | dump the live config as one `cfg key=val …` line for the Config & PID Tuner pages |
 
 **You must reflash the firmware** for the Config/PID pages to work against real
 hardware; an older build simply won't answer `Q` or accept `LC/LV/G/X`. In

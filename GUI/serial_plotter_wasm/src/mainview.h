@@ -49,6 +49,10 @@ private slots:
     void onApplySetpoint();
     void onStopSetpoint();
     void onApplyGains();
+    void onApplyCurrentGains();
+    void onApplyPositionGains();
+    void onReadConfig();
+    void onConfigReceived(const QHash<QString, double> &fields);
 
     void clearAll();
 
@@ -79,7 +83,14 @@ private:
     // Tuner widgets
     QComboBox *m_modeCombo = nullptr;
     QDoubleSpinBox *m_setpointSpin = nullptr;
-    QDoubleSpinBox *m_kpSpin = nullptr;
+    QDoubleSpinBox *m_kpSpin = nullptr;      // velocity PID
     QDoubleSpinBox *m_kiSpin = nullptr;
     QDoubleSpinBox *m_kdSpin = nullptr;
+    QDoubleSpinBox *m_curKpSpin = nullptr;   // current PID
+    QDoubleSpinBox *m_curKiSpin = nullptr;
+    QDoubleSpinBox *m_curKdSpin = nullptr;
+    QDoubleSpinBox *m_posKpSpin = nullptr;   // position PID
+    QDoubleSpinBox *m_posKiSpin = nullptr;
+    QDoubleSpinBox *m_posKdSpin = nullptr;
+    QLabel *m_configSummary = nullptr;       // live config read-back (Q)
 };

@@ -34,10 +34,16 @@ const Cmd kCommands[] = {
     {"KI<v>", "KI2", "Velocity PID integral gain.", false},
     {"KD<v>", "KD0", "Velocity PID derivative gain.", false},
     {"K", "K", "Re-apply and print the current velocity PID gains.", true},
+    {"JP<v>", "JP1.0", "Current PID proportional gain (V per A).", false},
+    {"JI<v>", "JI50", "Current PID integral gain.", false},
+    {"JD<v>", "JD0", "Current PID derivative gain.", false},
+    {"PP<v>", "PP1.0", "Position PID proportional gain (same as G).", false},
+    {"PI<v>", "PI0", "Position PID integral gain.", false},
+    {"PD<v>", "PD0", "Position PID derivative gain.", false},
     {"LC<A>", "LC5", "Current limit (A), clamped to CFG_CURRENT_LIMIT_MAX.", false},
     {"LV<rad/s>", "LV20", "Velocity limit (rad/s), clamped to CFG_VEL_LIMIT_MAX.", false},
-    {"G<v>", "G1.0", "Position controller P gain.", false},
-    {"Q", "Q", "Dump the live config as a 'cfg …' line (used by Motor Config).", true},
+    {"G<v>", "G1.0", "Position controller P gain (alias of PP).", false},
+    {"Q", "Q", "Dump the live config as a 'cfg …' line (used by Motor Config & PID Tuner).", true},
 };
 
 enum Column { ColCmd, ColExample, ColDesc, ColAction, ColCount };
