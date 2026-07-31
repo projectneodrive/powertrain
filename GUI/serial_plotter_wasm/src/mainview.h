@@ -5,6 +5,7 @@
 
 #include <QHash>
 #include <QString>
+#include <QTimer>
 #include <array>
 #include <deque>
 
@@ -18,6 +19,7 @@ class QDoubleSpinBox;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
+class QPushButton;
 class QScrollArea;
 class QStackedWidget;
 QT_END_NAMESPACE
@@ -44,6 +46,7 @@ private slots:
     // Plotter panel
     void onSendClicked();
     void onSaveCsv();
+    void onRecordToggled(bool on);
 
     // Tuner panel
     void onApplySetpoint();
@@ -68,8 +71,16 @@ private:
     // source of the WASM build's memory churn. Bounded so a long session can't
     // grow without limit; the oldest lines fall off the front.
     void appendLogRow(const QString &raw);
+    void updateRecordIndicator();
     std::deque<QString> m_logRows;
     bool m_wasConnected = false;
+    // CSV capture is opt-in: nothing is retained until Start is pressed. Also
+    // means an idle session costs nothing to keep open.
+    bool m_recording = false;
+    // The row count is refreshed on a timer rather than per line: at 10 Hz,
+    // reformatting the label on every sample is exactly the kind of churn the
+    // rest of this class avoids.
+    QTimer m_recordTimer;
 
     QWidget *m_leftColumn = nullptr;
     QStackedWidget *m_leftStack = nullptr;
@@ -80,6 +91,9 @@ private:
     // Plotter widgets
     QDoubleSpinBox *m_windowSpin = nullptr;
     QLineEdit *m_commandEdit = nullptr;
+    QPushButton *m_recordButton = nullptr;
+    QPushButton *m_saveButton = nullptr;
+    QLabel *m_recordIndicator = nullptr;
 
     // Tuner widgets
     QComboBox *m_modeCombo = nullptr;

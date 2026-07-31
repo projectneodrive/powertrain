@@ -106,11 +106,28 @@ QWidget *MainView::buildPlotterPanel(double windowS)
     m_windowSpin->setDecimals(1);
     m_windowSpin->setValue(windowS);
     auto *clearButton = new QPushButton(QStringLiteral("Clear Graphs + Monitor"));
-    auto *saveButton = new QPushButton(QStringLiteral("Save CSV"));
+
+    // CSV capture. Checkable so the button itself carries the state, with a
+    // separate indicator line because a pressed-in button is easy to miss when
+    // you come back to the bench.
+    m_recordButton = new QPushButton(QStringLiteral("● Start recording"));
+    m_recordButton->setCheckable(true);
+    m_recordButton->setToolTip(
+        QStringLiteral("Capture telemetry lines for CSV export. The graphs and "
+                       "the serial monitor keep running either way."));
+    m_recordIndicator = new QLabel;
+
+    m_saveButton = new QPushButton(QStringLiteral("Save CSV"));
     ctrlLayout->addWidget(new QLabel(QStringLiteral("Time window (s)")), 0, 0);
     ctrlLayout->addWidget(m_windowSpin, 0, 1);
     ctrlLayout->addWidget(clearButton, 1, 0, 1, 2);
-    ctrlLayout->addWidget(saveButton, 2, 0, 1, 2);
+    ctrlLayout->addWidget(m_recordButton, 2, 0, 1, 2);
+    ctrlLayout->addWidget(m_recordIndicator, 3, 0, 1, 2);
+    ctrlLayout->addWidget(m_saveButton, 4, 0, 1, 2);
+
+    m_recordTimer.setInterval(500);
+    connect(&m_recordTimer, &QTimer::timeout, this, &MainView::updateRecordIndicator);
+    updateRecordIndicator();
 
     auto *cmdGroup = new QGroupBox(QStringLiteral("Serial Commands"));
     auto *cmdLayout = new QVBoxLayout(cmdGroup);
@@ -153,7 +170,8 @@ QWidget *MainView::buildPlotterPanel(double windowS)
     layout->addStretch(1);
 
     connect(clearButton, &QPushButton::clicked, this, &MainView::clearAll);
-    connect(saveButton, &QPushButton::clicked, this, &MainView::onSaveCsv);
+    connect(m_recordButton, &QPushButton::toggled, this, &MainView::onRecordToggled);
+    connect(m_saveButton, &QPushButton::clicked, this, &MainView::onSaveCsv);
     connect(sendButton, &QPushButton::clicked, this, &MainView::onSendClicked);
     connect(m_commandEdit, &QLineEdit::returnPressed, this, &MainView::onSendClicked);
     connect(m_windowSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
@@ -278,9 +296,53 @@ void MainView::setSidePanelVisible(bool visible)
 
 void MainView::appendLogRow(const QString &raw)
 {
+    if (!m_recording)
+        return;
     m_logRows.push_back(raw);
     while (m_logRows.size() > kMaxLogRows)
         m_logRows.pop_front();
+}
+
+void MainView::onRecordToggled(bool on)
+{
+    m_recording = on;
+    m_recordButton->setText(on ? QStringLiteral("■ Stop recording")
+                               : QStringLiteral("● Start recording"));
+    if (on) {
+        // Deliberately NOT clearing here: pressing Stop then Start again
+        // resumes the same capture rather than silently discarding it. Use
+        // "Clear Graphs + Monitor" to start a genuinely fresh log.
+        m_recordTimer.start();
+        setStatus(m_logRows.empty()
+                      ? QStringLiteral("Recording to CSV buffer")
+                      : QStringLiteral("Recording resumed (%1 lines kept)")
+                            .arg(m_logRows.size()));
+    } else {
+        m_recordTimer.stop();
+        setStatus(QStringLiteral("Recording stopped — %1 lines captured")
+                      .arg(m_logRows.size()));
+    }
+    updateRecordIndicator();
+}
+
+void MainView::updateRecordIndicator()
+{
+    if (!m_recordIndicator)
+        return;
+    const size_t n = m_logRows.size();
+    if (m_recording) {
+        m_recordIndicator->setText(
+            QStringLiteral("● REC — %1 lines").arg(n));
+        m_recordIndicator->setStyleSheet(
+            QStringLiteral("color:#dc2626;font-weight:bold;"));
+    } else {
+        m_recordIndicator->setText(
+            n == 0 ? QStringLiteral("○ Not recording")
+                   : QStringLiteral("○ Stopped — %1 lines ready").arg(n));
+        m_recordIndicator->setStyleSheet(QStringLiteral("color:#777;"));
+    }
+    if (m_saveButton)
+        m_saveButton->setEnabled(n > 0);
 }
 
 void MainView::onTelemetry(double tSec, const std::array<double, kNumChannels> &vals,
@@ -414,6 +476,7 @@ void MainView::clearAll()
     m_plot->clear();
     m_logRows.clear();
     m_logView->clear();
+    updateRecordIndicator();   // the captured-line count just went to zero
     setStatus(QStringLiteral("Cleared graphs and monitor"));
 }
 
@@ -458,7 +521,10 @@ void MainView::onSaveCsv()
         f.close();
     }
 #endif
-    setStatus(QStringLiteral("Saved %1 log lines").arg(m_logRows.size()));
+    setStatus(QStringLiteral("Saved %1 log lines%2")
+                  .arg(m_logRows.size())
+                  .arg(m_recording ? QStringLiteral(" (still recording)")
+                                   : QString()));
 }
 
 void MainView::setStatus(const QString &text)
