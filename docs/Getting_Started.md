@@ -164,7 +164,7 @@ A successful upload ends with something like `Programming Complete!` /
 
 > **New motor?** Do the one‑time commissioning in **[Calibration.md](Calibration.md)**
 > — measure `R`/`L` and the sensor offset/direction, save them into
-> `board_config.h`, and the board boots pre‑calibrated (arms without the
+> `config/motor_config.h`, and the board boots pre‑calibrated (arms without the
 > alignment sweep, so the rotor needn't be free).
 
 > **Prefer a GUI?** Instead of the raw serial monitor you can drive all of this
@@ -352,7 +352,7 @@ so odrivetool and existing ODrive CAN tools work unchanged.
 | `candump` shows nothing | Bit rate mismatch (must be 500 kbit/s), missing 120 Ω terminators, swapped CANH/CANL, or the clone's CAN transceiver isn't populated (PB8/PB9). |
 | MCP2515 won't init | Wrong crystal setting — try `MCP_16MHZ` vs `MCP_8MHZ` in the sketch. |
 | ESP32 TWAI won't send or receive | Check that the transceiver is 3.3 V compatible, TXD/RXD are wired to the correct GPIOs, and CANH/CANL are not swapped. |
-| `Vbus` reads wrong | Calibrate `CFG_VBUS_DIV` in `board_config.h` to your board's divider. |
+| `Vbus` reads wrong | Calibrate `CFG_VBUS_DIV` in `config/motor_config.h` to your board's divider. |
 | Motor spins the wrong way / jitters | Encoder A/B direction; the `STM32HWEncoder` is new — verify sign vs. the old software encoder. |
 | Hall motor is rough/notchy at **all** speeds | Hall commutation ripple (60° grid assumption). Run the hall‑angle calibration — `H`, or [Calibration.md Step 3b](Calibration.md#step-3b--hall-only-calibrate-the-hall-sector-angles). Confirm first with a constant‑torque `T0.3`: if `Iq` ripples at fixed setpoint while the disarmed shaft has no strong detents, it's commutation, not the velocity PID. |
 
@@ -364,7 +364,7 @@ so odrivetool and existing ODrive CAN tools work unchanged.
 - **[Calibration.md](Calibration.md)** — commissioning a new motor (find & save
   `R`/`L`, sensor offset/direction, pre‑calibrated boot).
 - Firmware source: [`src/main.cpp`](../src/main.cpp),
-  [`include/board_config.h`](../include/board_config.h),
+  [`include/config/`](../include/config/),
   [`lib/odrive_can/`](../lib/odrive_can/).
 - ODrive CANSimple reference:
   [ODrive CAN guide](https://docs.odriverobotics.com/v/latest/guides/can-guide.html).

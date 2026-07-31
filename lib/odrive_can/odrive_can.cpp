@@ -22,7 +22,7 @@ void OdriveCAN::begin(uint8_t node_id, uint32_t baud, uint8_t irq_prio) {
   // by the library's constructor, so calling setIRQPriority() after begin()
   // (as this used to) left the CAN1 ISR at NVIC priority 0 -- ABOVE
   // configMAX_SYSCALL_INTERRUPT_PRIORITY (see NVIC_PRIO_RTOS_SAFE comment in
-  // board_config.h), meaning it could preempt a FreeRTOS critical section
+  // config/plc_config.h), meaning it could preempt a FreeRTOS critical section
   // mid-update inside the driver's own TX/RX ring buffers and corrupt them.
   // That fully explains "a few frames work, then everything wedges forever,
   // non-deterministically depending on boot timing".
@@ -58,91 +58,99 @@ void OdriveCAN::poll() {
 }
 
 // ---------------------------------------------------------------------------
+//  RX handlers. One per entry in include/can_commands.h.
+// ---------------------------------------------------------------------------
+void OdriveCAN::rxEstop(const uint8_t*) {
+  _io.estop = true;
+  _io.armed = false;
+  _io.axis_error |= ERR_ESTOP_REQUESTED;
+}
+
+void OdriveCAN::rxSetAxisState(const uint8_t* b) {
+  uint32_t s = rd_u32(b);
+  if (s == AXIS_CLOSED_LOOP || s == AXIS_SENSORLESS) {
+    if (!_io.estop) { _io.armed = true; _io.last_setpoint_ms = millis(); }
+  } else if (s == AXIS_IDLE) {
+    _io.armed = false;
+  } else if (s == AXIS_MOTOR_CAL) {
+    _io.req_characterise = true;             // measure phase R/L (while disarmed)
+  }
+}
+
+void OdriveCAN::rxSetControllerMode(const uint8_t* b) {
+  _io.control_mode = (uint8_t)rd_u32(b);
+  _io.input_mode   = (uint8_t)rd_u32(b + 4);
+  _io.new_mode     = true;
+}
+
+void OdriveCAN::rxSetInputPos(const uint8_t* b) {
+  _io.input_pos = rd_f32(b) * TWO_PI;          // rev -> rad
+  _io.last_setpoint_ms = millis();
+}
+
+void OdriveCAN::rxSetInputVel(const uint8_t* b) {
+  _io.input_vel = rd_f32(b) * TWO_PI;          // rev/s -> rad/s
+  _io.last_setpoint_ms = millis();             // (torque FF in b+4 ignored)
+}
+
+void OdriveCAN::rxSetInputTorque(const uint8_t* b) {
+  _io.input_torque = rd_f32(b);                // Nm
+  _io.last_setpoint_ms = millis();
+}
+
+void OdriveCAN::rxSetLimits(const uint8_t* b) {
+  _io.vel_limit     = rd_f32(b) * TWO_PI;      // rev/s -> rad/s
+  _io.current_limit = rd_f32(b + 4);           // A
+}
+
+void OdriveCAN::rxSetPosGain(const uint8_t* b) {
+  _io.pos_gain = rd_f32(b);
+}
+
+void OdriveCAN::rxSetVelGains(const uint8_t* b) {
+  _io.vel_gain      = rd_f32(b) / TWO_PI;      // Nm/(rev/s) -> Nm/(rad/s)
+  _io.vel_int_gain  = rd_f32(b + 4) / TWO_PI;
+  _io.req_vel_gains = true;
+}
+
+void OdriveCAN::rxClearErrors(const uint8_t*) {
+  _io.req_clear_errors = true;
+  _io.estop = false;
+}
+
+void OdriveCAN::rxReboot(const uint8_t*) {
+  _io.req_reboot = true;
+}
+
+void OdriveCAN::rxSetAxisNodeId(const uint8_t* b) {
+  _node = (uint8_t)rd_u32(b);
+  _can.setFilterSingleMask(0, (uint32_t)_node << 5, 0x7E0, STD);
+}
+
+// Getters: answer straight away with the same frame the cyclic sender uses.
+void OdriveCAN::rxGetEncoderEstimates(const uint8_t*) { sendEncoderEstimates(); }
+void OdriveCAN::rxGetIq(const uint8_t*)               { sendIq(); }
+void OdriveCAN::rxGetBusVI(const uint8_t*)            { sendBusVI(); }
+
+void OdriveCAN::rxGetMotorError(const uint8_t*) {
+  uint8_t d[8] = {0}; wr_u32(d, _io.motor_error);      send(CMD_GET_MOTOR_ERROR, d, 8);
+}
+void OdriveCAN::rxGetEncoderError(const uint8_t*) {
+  uint8_t d[8] = {0}; wr_u32(d, _io.encoder_error);    send(CMD_GET_ENCODER_ERROR, d, 8);
+}
+void OdriveCAN::rxGetControllerError(const uint8_t*) {
+  uint8_t d[8] = {0}; wr_u32(d, _io.controller_error); send(CMD_GET_CONTROLLER_ERROR, d, 8);
+}
+
+// ---------------------------------------------------------------------------
 void OdriveCAN::dispatch(uint8_t cmd, const CAN_message_t& m) {
   const uint8_t* b = m.buf;
   switch (cmd) {
-    // -------- setters / triggers --------
-    case CMD_ESTOP:
-      _io.estop = true;
-      _io.armed = false;
-      _io.axis_error |= ERR_ESTOP_REQUESTED;
-      break;
-
-    case CMD_SET_AXIS_STATE: {
-      uint32_t s = rd_u32(b);
-      if (s == AXIS_CLOSED_LOOP || s == AXIS_SENSORLESS) {
-        if (!_io.estop) { _io.armed = true; _io.last_setpoint_ms = millis(); }
-      } else if (s == AXIS_IDLE) {
-        _io.armed = false;
-      } else if (s == AXIS_MOTOR_CAL) {
-        _io.req_characterise = true;             // measure phase R/L (while disarmed)
-      }
-      break;
-    }
-
-    case CMD_SET_CONTROLLER_MODE:
-      _io.control_mode = (uint8_t)rd_u32(b);
-      _io.input_mode   = (uint8_t)rd_u32(b + 4);
-      _io.new_mode     = true;
-      break;
-
-    case CMD_SET_INPUT_POS:
-      _io.input_pos = rd_f32(b) * TWO_PI;          // rev -> rad
-      _io.last_setpoint_ms = millis();
-      break;
-
-    case CMD_SET_INPUT_VEL:
-      _io.input_vel = rd_f32(b) * TWO_PI;          // rev/s -> rad/s
-      _io.last_setpoint_ms = millis();             // (torque FF in b+4 ignored)
-      break;
-
-    case CMD_SET_INPUT_TORQUE:
-      _io.input_torque = rd_f32(b);                // Nm
-      _io.last_setpoint_ms = millis();
-      break;
-
-    case CMD_SET_LIMITS:
-      _io.vel_limit     = rd_f32(b) * TWO_PI;      // rev/s -> rad/s
-      _io.current_limit = rd_f32(b + 4);           // A
-      break;
-
-    case CMD_SET_POS_GAIN:
-      _io.pos_gain = rd_f32(b);
-      break;
-
-    case CMD_SET_VEL_GAINS:
-      _io.vel_gain      = rd_f32(b) / TWO_PI;      // Nm/(rev/s) -> Nm/(rad/s)
-      _io.vel_int_gain  = rd_f32(b + 4) / TWO_PI;
-      _io.req_vel_gains = true;
-      break;
-
-    case CMD_CLEAR_ERRORS:
-      _io.req_clear_errors = true;
-      _io.estop = false;
-      break;
-
-    case CMD_REBOOT:
-      _io.req_reboot = true;
-      break;
-
-    case CMD_SET_AXIS_NODE_ID:
-      _node = (uint8_t)rd_u32(b);
-      _can.setFilterSingleMask(0, (uint32_t)_node << 5, 0x7E0, STD);
-      break;
-
-    // -------- getters (reply immediately) --------
-    case CMD_GET_ENCODER_ESTIMATES: sendEncoderEstimates(); break;
-    case CMD_GET_IQ:                sendIq();               break;
-    case CMD_GET_BUS_VI:            sendBusVI();            break;
-    case CMD_GET_MOTOR_ERROR: {
-      uint8_t d[8] = {0}; wr_u32(d, _io.motor_error);      send(CMD_GET_MOTOR_ERROR, d, 8); break;
-    }
-    case CMD_GET_ENCODER_ERROR: {
-      uint8_t d[8] = {0}; wr_u32(d, _io.encoder_error);    send(CMD_GET_ENCODER_ERROR, d, 8); break;
-    }
-    case CMD_GET_CONTROLLER_ERROR: {
-      uint8_t d[8] = {0}; wr_u32(d, _io.controller_error); send(CMD_GET_CONTROLLER_ERROR, d, 8); break;
-    }
+#define CAN_RX(id, handler)                   case id: handler(b); return;
+#define CAN_TX_CYCLIC(id, period_ms, sender)
+#include "can_commands.h"
+#undef CAN_TX_CYCLIC
+#undef CAN_RX
     default:
       break;   // unsupported cmd -> silently ignore (anticogging, traj, etc.)
   }
@@ -150,10 +158,18 @@ void OdriveCAN::dispatch(uint8_t cmd, const CAN_message_t& m) {
 
 // ---------------------------------------------------------------------------
 void OdriveCAN::txCyclic(uint32_t now) {
-  if (now - _t_enc >= 10)  { _t_enc = now; sendEncoderEstimates(); }  // 100 Hz
-  if (now - _t_hb  >= 100) { _t_hb  = now; sendHeartbeat();        }  // 10 Hz
-  if (now - _t_iq  >= 100) { _t_iq  = now; sendIq();               }
-  if (now - _t_vi  >= 100) { _t_vi  = now; sendBusVI();            }
+  uint8_t slot = 0;
+#define CAN_RX(id, handler)
+#define CAN_TX_CYCLIC(id, period_ms, sender)                       \
+  if (now - _t_cyclic[slot] >= (uint32_t)(period_ms)) {            \
+    _t_cyclic[slot] = now;                                         \
+    sender();                                                      \
+  }                                                                \
+  slot++;
+#include "can_commands.h"
+#undef CAN_TX_CYCLIC
+#undef CAN_RX
+  (void)slot;
 }
 
 // ---------------------------------------------------------------------------

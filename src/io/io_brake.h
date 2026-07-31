@@ -1,45 +1,53 @@
 // ============================================================================
-//  brake.h — chopper de dissipation sur la résistance de freinage (bornes AUX).
+//  io_brake.h — I/O module for the brake-resistor half-bridge (AUX terminals).
 //
-//  Matériel : demi-pont AUX du DRV8301/ODESC — gate driver LM5109B (U7) +
-//  NTMFS5C628N (IC15//IC16 côté haut, IC13//IC14 côté bas). La résistance est
-//  câblée entre le point milieu (JP2.2 / TP13) et la masse (JP2.1 / TP12) :
-//  c'est donc le FET HAUT qui dissipe.
+//  This module owns TIM2/CH3/CH4 and nothing else. TIM1 (motor PWM), TIM3
+//  (sensor) and TIM6 (FOC tick) are never reallocated.
 //
-//  /!\ DÉPENDANCE MATÉRIELLE CRITIQUE : le VDD du LM5109B est alimenté par
-//  GVDD, le régulateur de grille interne du DRV8301, présent uniquement quand
-//  EN_GATE est haut. Le frein est donc PHYSIQUEMENT INOPÉRANT étage désarmé —
-//  ce n'est pas une décision logicielle, c'est le câblage de la carte.
-//  Conséquence directe : aucune protection contre les surtensions n'existe
-//  quand l'étage est désarmé (moteur entraîné mécaniquement à l'arrêt, par
-//  exemple). TODO: si une protection permanente est nécessaire, maintenir
-//  EN_GATE haut en permanence et couper le moteur autrement (BDTR.MOE de TIM1
-//  à 0 met les six grilles moteur en Hi-Z sans toucher à EN_GATE, donc sans
-//  perdre GVDD).
+//  It is PURE OUTPUT: give it a duty, it programs the timer. The decision of
+//  WHAT duty to apply — the hysteresis and the proportional law — lives in
+//  fb/fb_brake_chopper.h, because that is control logic, not hardware.
 //
-//  Le module ne touche QUE TIM2/CH3/CH4. TIM1 (PWM moteur), TIM3 (capteur) et
-//  TIM6 (tick FOC) ne sont jamais réalloués.
+//  Hardware: DRV8301/ODESC AUX half-bridge — LM5109B gate driver (U7) +
+//  NTMFS5C628N (IC15//IC16 high side, IC13//IC14 low side). The resistor is
+//  wired between the midpoint (JP2.2 / TP13) and ground (JP2.1 / TP12), so it
+//  is the HIGH FET that dissipates. The topology and the mandatory complementary
+//  drive are documented in config/hw_pinout.h.
+//
+//  /!\ CRITICAL HARDWARE DEPENDENCY: the LM5109B's VDD is fed from GVDD, the
+//  DRV8301's internal gate regulator, which only exists while EN_GATE is high.
+//  The brake is therefore PHYSICALLY INOPERATIVE with the stage disarmed — that
+//  is not a software decision, it is the board's wiring. Direct consequence:
+//  there is NO over-voltage protection at all while the stage is disarmed (a
+//  motor driven mechanically at standstill, for instance).
+//  TODO: if permanent protection is needed, hold EN_GATE high at all times and
+//  cut the motor another way (TIM1's BDTR.MOE = 0 puts the six motor gates in
+//  Hi-Z without touching EN_GATE, hence without losing GVDD).
 // ============================================================================
 #pragma once
 #include <Arduino.h>
 
+namespace io {
 namespace brake {
 
-// Configure TIM2 en center-aligned et laisse le demi-pont à l'ARRÊT.
-// À appeler dans setup() APRÈS la mise en route du DRV8301.
+// Drive both AUX gates LOW as plain GPIO. Must run at the very top of boot,
+// BEFORE anything switches those pins to an alternate function, so the
+// half-bridge never passes through an undefined state at power-up.
+void preInit();
+
+// Configure TIM2 center-aligned and leave the half-bridge STOPPED.
+// Call from the boot sequence AFTER the DRV8301 has been brought up (GVDD).
 void init();
 
-// Régulation du chopper. À appeler périodiquement depuis SafetyTask.
-//   vbus         : tension de bus filtrée (V). <= 0 => mesure invalide => OFF.
-//   stage_active : étage de puissance réellement actif (g_focReady && !g_fault
-//                  && EN_GATE haut). Faux => OFF immédiat, sans condition.
-void update(float vbus, bool stage_active);
+// Apply a duty in [0 .. CFG_BRAKE_MAX_DUTY]. Values <= 0 stop the bridge.
+void setDuty(float d);
 
-// Arrêt immédiat des deux FETs. Sûr à appeler avant init() et depuis
-// n'importe quel contexte (deux écritures registre).
+// Immediate stop of both FETs. Safe to call before init() and from any
+// context (two register writes).
 void off();
 
-// Duty actuellement appliqué [0..CFG_BRAKE_MAX_DUTY], pour la télémétrie.
+// Duty currently applied, for telemetry.
 float duty();
 
 } // namespace brake
+} // namespace io

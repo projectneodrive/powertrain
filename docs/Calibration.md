@@ -4,14 +4,14 @@ This is the step‑by‑step for bringing up a **new motor**: which parameters t
 find, how to measure them, and how to **save** them so the board boots ready.
 
 > **How "saving" works today:** parameters live in
-> [`include/board_config.h`](../include/board_config.h) and are baked in at
+> [`include/config/motor_config.h`](../include/config/motor_config.h) and are baked in at
 > compile time (the ODrive‑style `pre_calibrated` equivalent). You measure once,
 > paste the numbers into that file, and rebuild. Runtime save‑over‑CAN‑to‑flash
-> is a later phase; until then, **board_config.h + rebuild is the save.**
+> is a later phase; until then, **`config/motor_config.h` + rebuild is the save.**
 
 ## The parameters
 
-| # | Parameter | How to get it | `board_config.h` field |
+| # | Parameter | How to get it | `motor_config.h` field |
 |---|-----------|---------------|------------------------|
 | 1 | Pole pairs | Datasheet, or (magnets ÷ 2) | `CFG_POLE_PAIRS` |
 | 2 | KV → torque const `Kt` | Datasheet (`Kt = 8.27/KV`) | `CFG_KV` |
@@ -40,7 +40,7 @@ the power switch. Calibration energises and moves the motor.
 
 ## Step 1 — set the known parameters (datasheet)
 
-In [`board_config.h`](../include/board_config.h), set the values directly, and
+In [`config/motor_config.h`](../include/config/motor_config.h), set the values directly, and
 **leave `CFG_PRECALIBRATED 0`** for now:
 
 ```c
@@ -63,7 +63,7 @@ Characterising motor (R/L)...
   R = 0.1234 ohm   L = 250.00 uH
 ```
 
-Copy them into `board_config.h` — **note the µH → H conversion** (`250 µH = 0.00025`):
+Copy them into `config/motor_config.h` — **note the µH → H conversion** (`250 µH = 0.00025`):
 
 ```c
 #define CFG_PHASE_R  0.1234f      // ohm  (as printed)
@@ -79,7 +79,7 @@ aligns the sensor to the electrical angle, then prints:
 initFOC OK | CFG_SENSOR_DIRECTION=1  CFG_ZERO_ELEC_ANGLE=2.7183
 ```
 
-Copy both straight into `board_config.h`:
+Copy both straight into `config/motor_config.h`:
 
 ```c
 #define CFG_ZERO_ELEC_ANGLE  2.7183f
@@ -231,7 +231,7 @@ through the handoff.
 
 ---
 
-## Quick reference — one full example (`board_config.h`)
+## Quick reference — one full example (`config/motor_config.h`)
 
 ```c
 #define CFG_POLE_PAIRS       26
@@ -257,7 +257,7 @@ through the handoff.
 ## Notes & limits
 
 - **Compile‑time persistence only.** There is no over‑CAN "save_configuration"
-  yet; edit `board_config.h` and reflash. (Runtime flash persistence is planned.)
+  yet; edit `config/motor_config.h` and reflash. (Runtime flash persistence is planned.)
 - If `initFOC` fails (`ENCODER_FAILED`), the sensor isn't reading correctly —
   check wiring/`SENSOR_TYPE`, and for hall verify the A/B/C order on PB4/PB5/PC9.
 - `Kt` is only as good as the datasheet KV; if torque readings are off, refine

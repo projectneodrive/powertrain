@@ -1,57 +1,62 @@
 // ============================================================================
-//  brake.cpp — voir brake.h pour la topologie et la dépendance à GVDD.
+//  io_brake.cpp — see io_brake.h for the topology and the GVDD dependency.
 //
-//  PWM CENTER-ALIGNED (CMS=3), comme le firmware ODrive. En edge-aligned, au
-//  repli du compteur, HI descend et LI monte au MÊME instant : le temps mort
-//  n'est ménagé que sur un seul front et l'autre est un shoot-through franc.
-//  En center-aligned le compteur passe deux fois par chaque CCR, donc l'écart
-//  CCR4-CCR3 produit le temps mort sur LES DEUX fronts.
+//  CENTER-ALIGNED PWM (CMS=3), like the ODrive firmware. In edge-aligned mode,
+//  at the counter's wrap, HI falls and LI rises at the SAME instant: the dead
+//  time is only honoured on one edge and the other is a hard shoot-through.
+//  Center-aligned, the counter passes each CCR twice, so the CCR4-CCR3 gap
+//  produces the dead time on BOTH edges.
 //
-//  CH3 (LI, FET bas)  en PWM mode 1 : actif tant que CNT <  CCR3
-//  CH4 (HI, FET haut) en PWM mode 2 : actif tant que CNT >= CCR4
-//  Avec CCR3 < CCR4 les deux commandes ne se recouvrent jamais.
+//  CH3 (LI, low FET)  in PWM mode 1: active while CNT <  CCR3
+//  CH4 (HI, high FET) in PWM mode 2: active while CNT >= CCR4
+//  With CCR3 < CCR4 the two drives never overlap.
 // ============================================================================
-#include "brake.h"
-#include "board_config.h"
+#include "io/io_brake.h"
+#include "config/hw_pinout.h"
+#include "config/motor_config.h"
 
+namespace io {
 namespace brake {
 namespace {
 
 HardwareTimer *g_timer  = nullptr;
 uint32_t       g_chanL  = 0;      // PIN_AUX_L -> LI
 uint32_t       g_chanH  = 0;      // PIN_AUX_H -> HI
-uint32_t       g_period = 0;      // ticks par demi-période (= ARR+1)
-uint32_t       g_dead   = 0;      // temps mort en ticks
-volatile float g_duty   = 0.0f;   // duty appliqué (télémétrie)
-bool           g_engaged = false; // état de l'hystérésis du chopper
+uint32_t       g_period = 0;      // ticks per half-period (= ARR+1)
+uint32_t       g_dead   = 0;      // dead time in ticks
+volatile float g_duty   = 0.0f;   // applied duty (telemetry)
 
-// Les deux CCR sont TOUJOURS écrits ensemble. Le preload (OC3PE/OC4PE, armé
-// dans init()) fait que la paire est chargée atomiquement à l'update event :
-// sans lui, il existe une fenêtre d'une période où CCR3 est déjà le nouveau et
-// CCR4 encore l'ancien -> recouvrement des deux FETs = court-circuit du bus.
+// The two CCRs are ALWAYS written together. Preload (OC3PE/OC4PE, armed in
+// init()) makes the pair load atomically at the update event: without it there
+// is a one-period window where CCR3 is already the new value and CCR4 still the
+// old one -> both FETs overlap = a short across the bus.
 inline void applyCcr(uint32_t ccrL, uint32_t ccrH) {
   if (!g_timer) return;
   g_timer->setCaptureCompare(g_chanL, ccrL, TICK_COMPARE_FORMAT);
   g_timer->setCaptureCompare(g_chanH, ccrH, TICK_COMPARE_FORMAT);
 }
 
-// CCR = g_period => jamais atteint (CNT max = ARR = g_period-1) => jamais actif
-// CCR3 = 0       => CNT < 0 jamais vrai                         => LI jamais actif
+// CCR = g_period => never reached (CNT max = ARR = g_period-1) => never active
+// CCR3 = 0       => CNT < 0 is never true                      => LI never active
 inline void stateOff() { applyCcr(0, g_period); }
 
 void statePwm(float d) {
-  int32_t mid = (int32_t)((float)g_period * (1.0f - d));  // CCR4 -> duty haut = d
+  int32_t mid = (int32_t)((float)g_period * (1.0f - d));  // CCR4 -> high-side duty = d
   int32_t lo  = mid - (int32_t)g_dead;                    // CCR3
-  if (lo < 0)                 lo  = 0;
+  if (lo < 0)                  lo  = 0;
   if (mid > (int32_t)g_period) mid = (int32_t)g_period;
   applyCcr((uint32_t)lo, (uint32_t)mid);
 }
 
 } // namespace
 
+void preInit() {
+  pinMode(PIN_AUX_H, OUTPUT); digitalWrite(PIN_AUX_H, LOW);
+  pinMode(PIN_AUX_L, OUTPUT); digitalWrite(PIN_AUX_L, LOW);
+}
+
 void off() {
-  g_duty    = 0.0f;
-  g_engaged = false;
+  g_duty = 0.0f;
   stateOff();
 }
 
@@ -64,56 +69,35 @@ void init() {
   g_timer = new HardwareTimer(inst);
   g_timer->setOverflow(CFG_BRAKE_PWM_HZ, HERTZ_FORMAT);   // ARR edge-aligned
 
-  // Temps mort en ticks, déduit de la fréquence réellement obtenue par le
-  // prescaler choisi ci-dessus (pas d'une valeur codée en dur).
+  // Dead time in ticks, derived from the frequency the chosen prescaler
+  // actually produced (not from a hard-coded value).
   uint32_t psc    = g_timer->getPrescaleFactor();
   uint32_t tickHz = g_timer->getTimerClkFreq() / (psc ? psc : 1);
   g_dead = (uint32_t)(((uint64_t)tickHz * CFG_BRAKE_DEADTIME_NS) / 1000000000ULL);
   if (g_dead < 1) g_dead = 1;
 
   TIM_TypeDef *T = g_timer->getHandle()->Instance;
-  // En center-aligned le compteur fait montant+descendant : 2x plus de ticks
-  // par période PWM. On divise (ARR+1) par 2 pour conserver CFG_BRAKE_PWM_HZ.
+  // Center-aligned, the counter runs up and down: 2x more ticks per PWM period.
+  // Halve (ARR+1) to keep CFG_BRAKE_PWM_HZ.
   uint32_t period_edge = T->ARR + 1u;
   T->ARR = (period_edge / 2u) - 1u;
   MODIFY_REG(T->CR1, TIM_CR1_CMS, TIM_CR1_CMS);   // CMS = 0b11
   g_period = T->ARR + 1u;
 
-  stateOff();                                     // OFF sûr AVANT d'activer l'AF
+  stateOff();                                     // safe OFF BEFORE enabling the AF
   g_timer->setMode(g_chanL, TIMER_OUTPUT_COMPARE_PWM1, PIN_AUX_L);
   g_timer->setMode(g_chanH, TIMER_OUTPUT_COMPARE_PWM2, PIN_AUX_H);
 
-  // Preload des comparateurs : CCR3/CCR4 changent ensemble, à l'update event.
+  // Comparator preload: CCR3/CCR4 change together, at the update event.
   T->CCMR2 |= TIM_CCMR2_OC3PE | TIM_CCMR2_OC4PE;
   T->CR1   |= TIM_CR1_ARPE;
-  T->EGR    = TIM_EGR_UG;                         // recharge ARR/PSC/CCR
+  T->EGR    = TIM_EGR_UG;                         // reload ARR/PSC/CCR
 
-  stateOff();                                     // setMode a pu remettre CCR à 0
+  stateOff();                                     // setMode may have reset CCR to 0
   g_timer->resume();
 }
 
-void update(float vbus, bool stage_active) {
-  // Défaut sûr : étage désarmé/en faute, ou mesure de bus invalide -> OFF.
-  // Étage désarmé, GVDD est absente de toute façon : commuter n'aurait aucun
-  // effet, mais on garde les registres dans un état défini.
-  if (!stage_active || vbus <= 0.0f) { off(); return; }
-
-  // Hystérésis : on s'engage au-dessus de VBUS_ON, on ne relâche qu'en
-  // repassant sous VBUS_OFF. Une fois engagé le duty est calculé à partir de
-  // VBUS_OFF (et non de VBUS_ON) : sinon il serait négatif — donc nul — dans
-  // toute la bande d'hystérésis, et le chopper se contenterait de battre
-  // autour de VBUS_ON au lieu de tenir le bus dans la bande.
-  if (!g_engaged) {
-    if (vbus <= CFG_BRAKE_VBUS_ON) { g_duty = 0.0f; stateOff(); return; }
-    g_engaged = true;
-  } else if (vbus < CFG_BRAKE_VBUS_OFF) {
-    g_engaged = false;
-    g_duty    = 0.0f;
-    stateOff();
-    return;
-  }
-
-  float d = (vbus - CFG_BRAKE_VBUS_OFF) * CFG_BRAKE_GAIN;
+void setDuty(float d) {
   d = constrain(d, 0.0f, (float)CFG_BRAKE_MAX_DUTY);
   g_duty = d;
   if (d <= 0.0f) stateOff();
@@ -123,3 +107,4 @@ void update(float vbus, bool stage_active) {
 float duty() { return g_duty; }
 
 } // namespace brake
+} // namespace io

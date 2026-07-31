@@ -14,6 +14,11 @@ application: e‑bike motor control (torque / velocity, with sensor or sensorles
 - **[docs/Calibration.md](docs/Calibration.md)** — commissioning a **new motor**:
   which parameters to find, how to measure `R`/`L` + sensor offset/direction, and
   how to save them so the board boots pre‑calibrated.
+- **[src/README.md](src/README.md)** — **working on the firmware itself**: how it
+  is organised (an IEC 61131‑3 style PLC), and how to add a program, a task, a
+  serial/CAN command or a telemetry channel. Continues into
+  **[docs/Architecture.md](docs/Architecture.md)** for the runtime internals,
+  concurrency model, timing budget and how to change core components.
 - **[docs/GUI.md](docs/GUI.md)** — the browser‑based **live plotter / PID tuner /
   motor config** web GUI (talks to the board over USB, no install). Hosted at
   `https://projectneodrive.github.io/powertrain/plotter/` (Chrome/Edge only —
@@ -26,7 +31,7 @@ The PlatformIO firmware project **is the repository root**.
 
 | Path | What it is |
 |------|-----------|
-| [`platformio.ini`](platformio.ini), [`src/`](src/), [`include/`](include/), [`lib/`](lib/) | **The firmware.** `src/main.cpp` (FreeRTOS tasks + axis state machine), `include/board_config.h` (pins / limits / timing), `lib/odrive_can/` (CANSimple protocol layer). |
+| [`platformio.ini`](platformio.ini), [`src/`](src/), [`include/`](include/), [`lib/`](lib/) | **The firmware**, organised as an IEC 61131‑3 style PLC — tasks, programs, function blocks and an explicit process image. **Start with [`src/README.md`](src/README.md)**, then `src/config/configuration.cpp` (the task table + boot order). Configuration lives in `include/config/` (`hw_pinout.h` / `motor_config.h` / `plc_config.h`); `lib/odrive_can/` is the CANSimple fieldbus driver. |
 | [`GUI/`](GUI/) | Host‑side USB tooling: the Qt‑for‑WebAssembly **web GUI** (`serial_plotter_wasm/`, see [docs/GUI.md](docs/GUI.md)) and a Python desktop plotter (`serial_plotter_fast.py`). Both talk directly to the board's USB serial console. |
 | [`test/`](test/) | Standalone bench sketches (raw encoder read, open‑loop, closed‑loop) — **not** part of the main build. |
 | [`CAN/`](CAN/) | CAN tooling: the ODrive CANSimple **DBC generator** (`create_can_dbc.py`) plus bare‑minimum **Arduino MCP2515** and **ESP32 TWAI** one‑way sender *examples* (`arduino_can_sender/`, `esp32_twai_sender/`) — send‑only, no telemetry parsing. For an actual CAN control station, use `can_utilities` instead (see below). |
@@ -90,7 +95,7 @@ USB‑CDC port interchangeably.
 
 STM32F405RGT6 @ 168 MHz · DRV8301 6‑PWM (TIM1) · encoder/hall PB4/PB5(/PC9) ·
 DRV SPI3 CS PC13 · phase current PC0/PC1 · Vbus PA6 · CAN1 PB8/PB9. Full pin map
-in [`include/board_config.h`](include/board_config.h).
+in [`include/config/hw_pinout.h`](include/config/hw_pinout.h).
 
 For host-side CAN control, use [`can_utilities`](../can_utilities) (an ESP32 +
 3.3 V CAN transceiver such as the CJMCU-230) — see above. `CAN/arduino_can_sender/`

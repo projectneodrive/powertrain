@@ -8,11 +8,18 @@
  *   - configCHECK_FOR_STACK_OVERFLOW: 0 -> 2 (task stack overflow detection)
  *   - configUSE_MALLOC_FAILED_HOOK:   0 -> 1 (heap exhaustion detection)
  * Both failure modes previously produced a silent hang with zero serial
- * output (e.g. right after "Serial cmds: ..." in setup(), before any task
- * telemetry ever printed) since neither the default kernel build nor the
- * app defined a handler to report them. See vApplicationStackOverflowHandler
- * / vApplicationMallocFailedHook in main.cpp for what happens when these
- * fire.
+ * output (e.g. right after the boot banner, before any task telemetry ever
+ * printed) since neither the default kernel build nor the app defined a
+ * handler to report them. See src/config/rtos_hooks.cpp for what happens
+ * when these fire.
+ *
+ * /!\ THIS FILE ONLY TAKES EFFECT IF include/ IS ON THE COMPILER'S INCLUDE
+ * PATH FOR THE LIBRARY BUILD. PlatformIO puts include/ on the path for src/
+ * automatically but NOT for lib_deps, so `__has_include` above silently
+ * answers "no" and the kernel falls back to its own defaults — flags and all.
+ * platformio.ini passes -I$PROJECT_INCLUDE_DIR to close that gap. If the two
+ * hooks ever stop firing, check that flag first: the failure mode is silence,
+ * not an error.
  */
 
 #ifndef STM32_FREERTOS_CONFIG_H

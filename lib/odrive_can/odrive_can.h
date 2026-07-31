@@ -5,13 +5,16 @@
 //  (CAN/create_can_dbc.py) and odrivetool / any CAN master work unchanged.
 //  Arbitration id = (node_id << 5) | cmd_id  (11-bit standard, little-endian).
 //
-//  This module is deliberately decoupled from SimpleFOC: it only reads/writes a
-//  shared AxisIO block. main.cpp bridges AxisIO <-> the BLDCMotor. Runs on
+//  This module is deliberately decoupled from SimpleFOC: it is a fieldbus I/O
+//  driver that only reads/writes the shared AxisIO block of the process image
+//  (include/gvl/axis_io.h). The control programs (src/prog/) bridge that block
+//  to the BLDCMotor; neither side knows about the other. Runs on
 //  pazi88/STM32_CAN (CAN1 on PB8/PB9).
 // ============================================================================
 #pragma once
 #include <Arduino.h>
 #include <STM32_CAN.h>
+#include "gvl/axis_io.h"   // AxisIO + the axis state/mode/error vocabulary
 
 namespace odcan {
 
@@ -43,77 +46,9 @@ enum Cmd : uint8_t {
   CMD_GET_CONTROLLER_ERROR  = 0x01D,
 };
 
-// ---- ODrive enums (fw-v0.5.6 values) ---------------------------------------
-enum AxisState : uint8_t {
-  AXIS_UNDEFINED   = 0,
-  AXIS_IDLE        = 1,
-  AXIS_SENSORLESS  = 5,   // SENSORLESS_CONTROL (fw <= 0.5.1 numbering; see plan)
-  AXIS_MOTOR_CAL   = 4,
-  AXIS_ENC_OFFSET_CAL = 7,
-  AXIS_CLOSED_LOOP = 8,
-};
-enum ControlMode : uint8_t {
-  CTRL_VOLTAGE  = 0,
-  CTRL_TORQUE   = 1,
-  CTRL_VELOCITY = 2,
-  CTRL_POSITION = 3,
-};
-enum AxisErrorBits : uint32_t {
-  ERR_NONE              = 0x00000000,
-  ERR_INVALID_STATE     = 0x00000001,
-  ERR_DC_BUS_OVER_VOLTAGE = 0x00000004,   // valeur AxisError ODrive fw-0.5.x
-  ERR_MOTOR_FAILED      = 0x00000040,
-  ERR_SENSORLESS_FAILED = 0x00000080,
-  ERR_ENCODER_FAILED    = 0x00000100,
-  ERR_CONTROLLER_FAILED = 0x00000200,
-  ERR_WATCHDOG_EXPIRED  = 0x00000800,
-  ERR_ESTOP_REQUESTED   = 0x00004000,
-};
-
-// ---- Shared command + telemetry block (bridged to SimpleFOC by main.cpp) ----
-//  All SI/rad units on the firmware side; CAN conversions (rev/Nm) happen here.
-struct AxisIO {
-  // commands (CAN writes, control loop reads)
-  volatile bool     armed            = false;   // CLOSED_LOOP requested
-  volatile bool     estop            = false;   // latched
-  volatile uint8_t  control_mode     = CTRL_TORQUE;
-  volatile uint8_t  input_mode       = 1;       // PASSTHROUGH
-  volatile float    input_pos        = 0.0f;    // rad
-  volatile float    input_vel        = 0.0f;    // rad/s
-  volatile float    input_torque     = 0.0f;    // Nm
-  volatile float    vel_limit        = 0.0f;    // rad/s
-  volatile float    current_limit    = 0.0f;    // A
-  volatile float    pos_gain         = 0.0f;    // (rad/s)/rad  — P_angle.P (cmd G/PP)
-  volatile float    pos_int_gain     = 0.0f;    // P_angle.I    (cmd PI, série uniquement)
-  volatile float    pos_d_gain       = 0.0f;    // P_angle.D    (cmd PD, série uniquement)
-  volatile bool     req_pos_gains    = false;   // pos I/D modifiés -> à appliquer
-  volatile float    vel_gain         = 0.0f;    // Nm/(rad/s)   — PID vitesse P
-  volatile float    vel_int_gain     = 0.0f;    // Nm/(rad/s)/s — PID vitesse I
-  volatile float    vel_d_gain       = 0.0f;    // Nm/(rad/s²)  — PID vitesse D (série uniquement)
-  volatile bool     req_vel_gains    = false;   // gains modifiés -> à appliquer
-  volatile float    cur_p_gain       = 0.0f;    // V/A          — PID courant P (cmd JP)
-  volatile float    cur_int_gain     = 0.0f;    // PID courant I (cmd JI)
-  volatile float    cur_d_gain       = 0.0f;    // PID courant D (cmd JD)
-  volatile bool     req_cur_gains    = false;   // gains courant modifiés -> à appliquer
-  volatile uint32_t last_setpoint_ms = 0;       // watchdog feed
-  volatile bool     req_reboot       = false;
-  volatile bool     req_clear_errors = false;
-  volatile bool     req_characterise = false;   // measure motor R/L (MOTOR_CALIBRATION)
-  volatile bool     new_mode         = false;   // control_mode changed by CAN
-
-  // telemetry (control loop writes, CAN reads)
-  volatile float    pos_rev     = 0.0f;         // rev
-  volatile float    vel_rev     = 0.0f;         // rev/s
-  volatile float    iq_setpoint = 0.0f;         // A
-  volatile float    iq_measured = 0.0f;         // A
-  volatile float    vbus        = 0.0f;         // V
-  volatile float    ibus        = 0.0f;         // A
-  volatile uint32_t axis_error  = 0;            // ORed AxisErrorBits
-  volatile uint8_t  cur_state   = AXIS_IDLE;    // current AxisState
-  volatile uint32_t motor_error = 0;
-  volatile uint32_t encoder_error = 0;
-  volatile uint32_t controller_error = 0;
-};
+// AxisState / ControlMode / AxisErrorBits and the AxisIO block itself now live
+// in include/gvl/axis_io.h — they are process data shared with the control
+// programs, not part of this wire protocol. Only the arbitration ids above are.
 
 // ---- The CAN interface -----------------------------------------------------
 class OdriveCAN {
@@ -140,15 +75,28 @@ public:
 private:
   void dispatch(uint8_t cmd, const CAN_message_t& m);
   void send(uint8_t cmd, const uint8_t* d, uint8_t len);
-  void sendHeartbeat();
-  void sendEncoderEstimates();
-  void sendIq();
-  void sendBusVI();
+
+  // RX handlers and cyclic senders, declared from the command table so the
+  // table and this class can never disagree about what exists.
+#define CAN_RX(cmd, handler)                  void handler(const uint8_t* b);
+#define CAN_TX_CYCLIC(cmd, period_ms, sender) void sender();
+#include "can_commands.h"
+#undef CAN_TX_CYCLIC
+#undef CAN_RX
+
+  // Number of cyclic slots, counted from the same table.
+  static constexpr uint8_t TX_CYCLIC_COUNT = 0
+#define CAN_RX(cmd, handler)
+#define CAN_TX_CYCLIC(cmd, period_ms, sender) + 1
+#include "can_commands.h"
+#undef CAN_TX_CYCLIC
+#undef CAN_RX
+      ;
 
   AxisIO&    _io;
   STM32_CAN  _can{CAN1, ALT, RX_SIZE_64, TX_SIZE_16};   // CAN1 on PB8/PB9
   uint8_t    _node = 0;
-  uint32_t   _t_hb = 0, _t_enc = 0, _t_iq = 0, _t_vi = 0;
+  uint32_t   _t_cyclic[TX_CYCLIC_COUNT] = {};   // last TX time per cyclic slot
   volatile uint32_t _tx_ok = 0, _tx_fail = 0, _rx_count = 0;
 };
 

@@ -29,29 +29,28 @@
 // NB: the demo generator (GUI .../demosource.cpp) synthesises fake values for
 // these same keys; if you add a channel, give it a demo value there too.
 
-TELEMETRY_CHANNEL(tgt,   "Target",        "#f97316", "",     2, g_active_target)
-TELEMETRY_CHANNEL(Iq,    "Iq [A]",        "#22c55e", "iq",   2, g_io.iq_measured)
-TELEMETRY_CHANNEL(vel,   "Vel [rad/s]",   "#3b82f6", "",     2, g_io.vel_rev * TWO_PI)
-TELEMETRY_CHANNEL(pos,   "Pos [rad]",     "#a855f7", "",     2, g_io.pos_rev * TWO_PI)
-TELEMETRY_CHANNEL(Vbus,  "Vbus [V]",      "#ef4444", "vbus", 1, g_io.vbus)
+TELEMETRY_CHANNEL(tgt,   "Target",        "#f97316", "",     2, gvl::Q.active_target)
+TELEMETRY_CHANNEL(Iq,    "Iq [A]",        "#22c55e", "iq",   2, gvl::AXIS.iq_measured)
+TELEMETRY_CHANNEL(vel,   "Vel [rad/s]",   "#3b82f6", "",     2, gvl::AXIS.vel_rev * TWO_PI)
+TELEMETRY_CHANNEL(pos,   "Pos [rad]",     "#a855f7", "",     2, gvl::AXIS.pos_rev * TWO_PI)
+TELEMETRY_CHANNEL(Vbus,  "Vbus [V]",      "#ef4444", "vbus", 1, gvl::AXIS.vbus)
 
-// --- Bilan énergétique du freinage ------------------------------------------
-// Irgn : courant que le MOTEUR renvoie dans le bus (g_io.ibus < 0 = génératrice).
-//        Tracé en positif pour se comparer directement à Ibrk. C'est l'énergie
-//        qu'il faut absorber quelque part.
-// Ibrk : courant moyen tiré par la résistance de freinage. C'est là qu'elle part.
+// --- Braking energy balance --------------------------------------------------
+// Irgn : current the MOTOR pushes back into the bus (ibus < 0 = generating).
+//        Plotted positive so it compares directly against Ibrk. This is the
+//        energy that has to be absorbed somewhere.
+// Ibrk : mean current drawn by the brake resistor. This is where it goes.
 //
-// Irgn > Ibrk durablement => la capacité de bus se charge => Vbus monte : soit
-// augmenter CFG_BRAKE_GAIN, soit la résistance ne suffit pas.
+// Irgn > Ibrk for any length of time => the bus capacitance charges => Vbus
+// climbs: either raise CFG_BRAKE_GAIN, or the resistor is not enough.
 //
-// /!\ Ibrk est CALCULÉ (duty * Vbus / R), pas mesuré : la carte n'a aucun shunt
-// sur la branche AUX. Il indique le courant COMMANDÉ. Si le demi-pont AUX ne
-// conduit pas, la courbe monte quand même — c'est Vbus qui dit la vérité.
+// /!\ Ibrk is COMPUTED (duty * Vbus / R), not measured: the board has no shunt
+// on the AUX branch. It shows the COMMANDED current. If the AUX half-bridge is
+// not conducting, the curve rises anyway — Vbus is the one telling the truth.
 TELEMETRY_CHANNEL(Irgn,  "Regen [A]",     "#06b6d4", "",     2,
-                  (g_io.ibus < 0.0f ? -g_io.ibus : 0.0f))
+                  (gvl::AXIS.ibus < 0.0f ? -gvl::AXIS.ibus : 0.0f))
 TELEMETRY_CHANNEL(Ibrk,  "Brake [A]",     "#eab308", "",     2,
-                  (brake::duty() * g_io.vbus / CFG_BRAKE_R))
+                  (io::brake::duty() * gvl::AXIS.vbus / CFG_BRAKE_R))
 
-// Fraction de l'observateur sensorless (hall build only) : 0 = hall pur,
-// 1 = sensorless.
-TELEMETRY_CHANNEL_HALL(blnd,  "blend",         "#ec4899", "", 2, hybrid.blend)
+// Sensorless observer fraction (hall build only): 0 = pure hall, 1 = sensorless.
+TELEMETRY_CHANNEL_HALL(blnd,  "blend",         "#ec4899", "", 2, io::motor::hybrid.blend)
