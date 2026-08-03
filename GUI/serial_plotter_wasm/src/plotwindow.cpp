@@ -1,4 +1,5 @@
 #include "plotwindow.h"
+#include "candevicespage.h"
 #include "cheatsheetpage.h"
 #include "configpage.h"
 #include "demosource.h"
@@ -9,8 +10,10 @@
 #include <QActionGroup>
 #include <QCheckBox>
 #include <QKeySequence>
+#include <QFrame>
 #include <QLabel>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QToolBar>
@@ -28,9 +31,20 @@ PlotWindow::PlotWindow(double windowS, QWidget *parent) : QMainWindow(parent)
     setCentralWidget(m_stack);
     m_mainView = new MainView(windowS);
     m_configPage = new ConfigPage();
+    m_canPage = new CanDevicesPage();
     m_cheatPage = new CheatSheetPage();
     m_stack->addWidget(m_mainView);
     m_stack->addWidget(m_configPage);
+
+    // The CAN page is taller than the viewport on a laptop, and it is the one
+    // page you read top to bottom (link -> errors -> counters), so it gets a
+    // scroll area rather than squeezing its tables.
+    auto *canScroll = new QScrollArea;
+    canScroll->setWidgetResizable(true);
+    canScroll->setFrameShape(QFrame::NoFrame);
+    canScroll->setWidget(m_canPage);
+    m_canPageHost = canScroll;
+    m_stack->addWidget(canScroll);
     m_stack->addWidget(m_cheatPage);
 
     // ----------------------------------------------------------- toolbar --
@@ -50,11 +64,14 @@ PlotWindow::PlotWindow(double windowS, QWidget *parent) : QMainWindow(parent)
     QAction *plotterAct = addPage(QStringLiteral("Live Plotter"));
     QAction *tunerAct = addPage(QStringLiteral("PID Tuner"));
     QAction *configAct = addPage(QStringLiteral("Motor Config"));
+    QAction *canAct = addPage(QStringLiteral("CAN Devices"));
     QAction *cmdAct = addPage(QStringLiteral("Commands"));
     plotterAct->setChecked(true);
     connect(plotterAct, &QAction::triggered, this, [this] { showMainPanel(MainView::PlotterPanel); });
     connect(tunerAct, &QAction::triggered, this, [this] { showMainPanel(MainView::TunerPanel); });
     connect(configAct, &QAction::triggered, this, [this] { showPage(m_configPage); });
+    // The page lives inside a scroll area; that is what the stack holds.
+    connect(canAct, &QAction::triggered, this, [this] { showPage(m_canPageHost); });
     connect(cmdAct, &QAction::triggered, this, [this] { showPage(m_cheatPage); });
 
     toolbar->addSeparator();

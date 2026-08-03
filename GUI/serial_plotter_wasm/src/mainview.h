@@ -12,6 +12,7 @@
 #include <QWidget>
 
 #include "channels.h"
+#include "logevent.h"
 
 QT_BEGIN_NAMESPACE
 class QComboBox;
@@ -40,7 +41,7 @@ public:
 private slots:
     void onTelemetry(double tSec, const std::array<double, kNumChannels> &vals,
                      const QString &raw, const QHash<QString, double> &fields);
-    void onMessage(const QString &raw);
+    void onLogEvent(const logevt::Event &event);
     void onConnectionChanged(bool connected, const QString &message);
 
     // Plotter panel
@@ -94,6 +95,11 @@ private:
     QPushButton *m_recordButton = nullptr;
     QPushButton *m_saveButton = nullptr;
     QLabel *m_recordIndicator = nullptr;
+    // Which severities reach the monitor pane. A VIEW filter: the lines are
+    // still received and still recorded to CSV, they are just not drawn. The
+    // source-side filter (how much the board sends at all) is the station's
+    // D<n> command, on the CAN Devices page.
+    QComboBox *m_logFilterCombo = nullptr;
 
     // Tuner widgets
     QComboBox *m_modeCombo = nullptr;

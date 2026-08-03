@@ -85,7 +85,7 @@ MainView::MainView(double windowS, QWidget *parent) : QWidget(parent)
 
     auto &hub = TelemetryHub::instance();
     connect(&hub, &TelemetryHub::telemetry, this, &MainView::onTelemetry);
-    connect(&hub, &TelemetryHub::message, this, &MainView::onMessage);
+    connect(&hub, &TelemetryHub::logEvent, this, &MainView::onLogEvent);
     connect(&hub, &TelemetryHub::configReceived, this, &MainView::onConfigReceived);
     connect(&SerialBridge::instance(), &SerialBridge::statusChanged,
             this, &MainView::onConnectionChanged);
@@ -124,6 +124,22 @@ QWidget *MainView::buildPlotterPanel(double windowS)
     ctrlLayout->addWidget(m_recordButton, 2, 0, 1, 2);
     ctrlLayout->addWidget(m_recordIndicator, 3, 0, 1, 2);
     ctrlLayout->addWidget(m_saveButton, 4, 0, 1, 2);
+
+    // Monitor filter. Info is the default because that is the level at which
+    // the log answers "what just happened" without answering "what is happening
+    // every ten milliseconds" as well.
+    m_logFilterCombo = new QComboBox;
+    m_logFilterCombo->addItem(QStringLiteral("Errors only"));
+    m_logFilterCombo->addItem(QStringLiteral("Warnings and above"));
+    m_logFilterCombo->addItem(QStringLiteral("Info and above"));
+    m_logFilterCombo->addItem(QStringLiteral("Everything"));
+    m_logFilterCombo->setCurrentIndex(logevt::Info);
+    m_logFilterCombo->setToolTip(QStringLiteral(
+        "Hides lines in the monitor below. They are still received and still "
+        "captured to CSV. To stop the board SENDING them, set its log level on "
+        "the CAN Devices page."));
+    ctrlLayout->addWidget(new QLabel(QStringLiteral("Monitor shows")), 5, 0);
+    ctrlLayout->addWidget(m_logFilterCombo, 5, 1);
 
     m_recordTimer.setInterval(500);
     connect(&m_recordTimer, &QTimer::timeout, this, &MainView::updateRecordIndicator);
@@ -353,10 +369,23 @@ void MainView::onTelemetry(double tSec, const std::array<double, kNumChannels> &
     appendLogRow(raw);
 }
 
-void MainView::onMessage(const QString &raw)
+void MainView::onLogEvent(const logevt::Event &e)
 {
-    m_logView->appendPlainText(raw);
-    appendLogRow(raw);
+    // Recorded before the filter, always: a CSV that silently omits the lines
+    // you had hidden is a trap, and the whole reason to capture one is to look
+    // at it later with different questions in mind.
+    appendLogRow(e.raw);
+
+    if (int(e.level) > m_logFilterCombo->currentIndex())
+        return;
+
+    // Untagged lines (the board's own banner text) get no bracket, so the
+    // firmware's boot output still reads the way it was written.
+    const QString body = e.tag.isEmpty()
+        ? e.text.toHtmlEscaped()
+        : QStringLiteral("[%1] %2").arg(e.tag, e.text.toHtmlEscaped());
+    m_logView->appendHtml(QStringLiteral("<span style='color:%1'>%2</span>")
+                              .arg(QLatin1String(logevt::levelColor(e.level)), body));
 }
 
 void MainView::onConnectionChanged(bool connected, const QString &message)

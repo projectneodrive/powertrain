@@ -186,8 +186,13 @@
 // ============================================================================
 //  CAN (ODrive CANSimple)
 // ============================================================================
+// These two are read directly by the ESP32 control station as well
+// (can_utilities/include/bridge_config.h includes this file), so the bridge
+// cannot be pointed at the wrong node or brought up at the wrong bit rate:
+// change them here and both ends follow. can_utilities turns CFG_CAN_BAUD into
+// a TWAI timing constant and #errors on a rate it has no constant for.
 #define CFG_CAN_NODE_ID   0
-#define CFG_CAN_BAUD      500000     // must match CAN_BAUD in can_utilities/src/main.cpp (500 kbit/s)
+#define CFG_CAN_BAUD      500000     // bit rate, both ends of the bus (500 kbit/s)
 #define CFG_WATCHDOG_MS   0          // CAN setpoint timeout; 0 = disabled.
                                      // Set e.g. 250 for an e-bike so that losing
                                      // the CAN master disarms the motor.

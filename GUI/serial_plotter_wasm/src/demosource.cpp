@@ -39,6 +39,7 @@ void DemoSource::start()
     m_beat = 0;
     m_tgt = m_vel = m_pos = m_iq = 0.0;
     m_brakeOn = false;
+    m_demoFaulted = false;
 
     const QByteArray banner =
         "--- SimpleFOC + FreeRTOS + CANSimple (DEMO, synthetic data) ---\n";
@@ -111,6 +112,40 @@ void DemoSource::tick()
     // too (the parser must route these to the log, not the plots).
     if (m_beat % 40 == 0)
         line += QStringLiteral("AK V: vel %1 -> %2 rad/s\n").arg(m_vel, 0, 'f', 2).arg(m_tgt, 0, 'f', 2);
+
+    // The bridge's CAN status line, once a second, so the CAN Devices page is
+    // populated in demo mode. Mirrors emitCanStatus() in
+    // can_utilities/lib/can_bridge/bridge_telemetry.cpp -- keep the key set in
+    // step or the page silently shows defaults.
+    if (m_beat % 10 == 0) {
+        // Fault the axis for a few seconds mid-cycle, so the error decoding and
+        // the red tinting are visible without needing a broken board.
+        const bool faulted = (m_ms / 1000) % 30 >= 25;
+        const quint32 axisErr = faulted ? 0x140u : 0u;
+        const int axisState = faulted ? 1 : 8;
+        line += QStringLiteral(
+                    "can node=0 link=1 hb_age=%1 hb_period=100 hb_timeout=500 bus=1 "
+                    "axis=%2 mode=2 axis_err=0x%3 motor_err=0x%4 enc_err=0x0 ctrl_err=0x0 "
+                    "tx_ok=%5 tx_fail=0 rx=%6 tx_ec=0 rx_ec=0 tx_failed=0 rx_missed=0 "
+                    "rx_overrun=0 arb_lost=0 bus_ec=%7 baud=500000 "
+                    "nodes=0x0000000000000001 loglvl=2\n")
+                    .arg(m_ms % 100)
+                    .arg(axisState)
+                    .arg(axisErr, 0, 16)
+                    .arg(faulted ? 1 : 0, 0, 16)
+                    .arg(m_beat / 4)
+                    .arg(m_beat * 4)
+                    .arg(faulted ? 3 : 0);
+
+        // ...and the matching event, on the transition only -- which is exactly
+        // what the station does, and what makes the monitor readable.
+        if (faulted != m_demoFaulted) {
+            m_demoFaulted = faulted;
+            line += faulted
+                ? QStringLiteral("log E AXIS error 0x0 -> 0x140 [MOTOR_FAILED|ENCODER_FAILED]\n")
+                : QStringLiteral("log I AXIS error cleared (was 0x140)\n");
+        }
+    }
 
     const QByteArray utf8 = line.toUtf8();
     SerialBridge::instance().feedBytes(utf8.constData(), utf8.size());

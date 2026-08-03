@@ -32,4 +32,7 @@ private:
     double m_pos = 0.0;
     double m_iq = 0.0;
     bool m_brakeOn = false;  // état de l'hystérésis du chopper (cf. brake.cpp)
+    // Le défaut synthétique du bus CAN : latch, pour n'émettre l'évènement que
+    // sur le front -- comme la station le fait réellement.
+    bool m_demoFaulted = false;
 };

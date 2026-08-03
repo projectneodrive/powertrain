@@ -1,7 +1,11 @@
 // Headless check of the parse/fan-out path: bytes fed to SerialBridge must come
-// back out of TelemetryHub split correctly into config vs telemetry vs message.
+// back out of TelemetryHub split correctly into config / can / telemetry / log,
+// and log lines must be classified by severity.
 // Build/run via tests/CMakeLists.txt (desktop qt-cmake). Exit 0 = pass.
+#include "axisvocab.h"
+#include "logevent.h"
 #include "serialbridge.h"
+#include "telemetry.h"
 #include "telemetryhub.h"
 
 #include <QCoreApplication>
@@ -26,8 +30,10 @@ int main(int argc, char **argv)
     QHash<QString, double> cfg;
     int telCount = 0;
     std::array<double, kNumChannels> lastVals{};
-    int msgCount = 0;
-    QString lastMsg;
+    int logCount = 0;
+    logevt::Event lastLog;
+    int canCount = 0;
+    QHash<QString, QString> lastCan;
 
     auto &hub = TelemetryHub::instance();
     QObject::connect(&hub, &TelemetryHub::configReceived,
@@ -35,8 +41,10 @@ int main(int argc, char **argv)
     QObject::connect(&hub, &TelemetryHub::telemetry,
                      [&](double, const std::array<double, kNumChannels> &v, const QString &,
                          const QHash<QString, double> &) { ++telCount; lastVals = v; });
-    QObject::connect(&hub, &TelemetryHub::message,
-                     [&](const QString &m) { ++msgCount; lastMsg = m; });
+    QObject::connect(&hub, &TelemetryHub::logEvent,
+                     [&](const logevt::Event &e) { ++logCount; lastLog = e; });
+    QObject::connect(&hub, &TelemetryHub::canStatus,
+                     [&](const QHash<QString, QString> &f) { ++canCount; lastCan = f; });
 
     auto feed = [](const char *s) {
         SerialBridge::instance().feedBytes(s, int(std::strlen(s)));
@@ -61,9 +69,43 @@ int main(int argc, char **argv)
     check(std::abs(lastVals[2] - 4.9) < 1e-9, "vel channel of split line = 4.90");
     check(std::abs(lastVals[4] - 24.4) < 1e-9, "Vbus channel of split line = 24.4");
 
-    std::printf("Message path:\n");
-    check(msgCount == 1, "one non-telemetry message");
-    check(lastMsg.startsWith(QStringLiteral("AK V")), "message is the AK line");
+    std::printf("Log path:\n");
+    check(logCount == 1, "one log event so far (the AK line)");
+    check(lastLog.tag == QStringLiteral("AK"), "AK line tagged AK");
+    check(lastLog.level == logevt::Info, "AK line is Info");
+
+    feed("log E AXIS error 0x0 -> 0x140 [MOTOR_FAILED|ENCODER_FAILED]\n");
+    check(lastLog.level == logevt::Error, "'log E ...' -> Error");
+    check(lastLog.tag == QStringLiteral("AXIS"), "tag extracted");
+    check(lastLog.text.startsWith(QStringLiteral("error 0x0")), "text has the prefix stripped");
+
+    feed("log D CAN TX id=0x00D CMD_SET_INPUT_VEL len=8\n");
+    check(lastLog.level == logevt::Debug, "'log D ...' -> Debug");
+
+    feed("--- SimpleFOC + FreeRTOS + CANSimple ---\n");
+    check(lastLog.level == logevt::Info, "unstructured firmware text -> Info");
+    check(lastLog.tag.isEmpty(), "unstructured text has no tag");
+    check(lastLog.text == QStringLiteral("--- SimpleFOC + FreeRTOS + CANSimple ---"),
+          "unstructured text passed through verbatim");
+
+    std::printf("CAN status path:\n");
+    feed("can node=3 link=1 hb_age=8 bus=1 axis=8 mode=2 axis_err=0x140 motor_err=0x0 "
+         "tx_ok=1234 rx=5678 bus_ec=0 baud=500000 nodes=0x0000000000000009 loglvl=2\n");
+    check(canCount == 1, "can line -> canStatus");
+    check(telemetry::tokenUInt(lastCan, "node") == 3, "node=3 (decimal)");
+    check(telemetry::tokenUInt(lastCan, "axis_err") == 0x140, "axis_err=0x140 (hex)");
+    check(telemetry::tokenUInt(lastCan, "nodes") == 0x9, "64-bit node mask survives");
+    check(telemetry::tokenUInt(lastCan, "absent", 42) == 42, "missing key -> fallback");
+    check(logCount == 4, "the can line did NOT reach the log");
+
+    std::printf("Shared axis vocabulary (include/axis_vocab.h):\n");
+    check(axisvocab::state(8) == QStringLiteral("CLOSED_LOOP"), "state 8 = CLOSED_LOOP");
+    check(axisvocab::mode(2) == QStringLiteral("VELOCITY"), "mode 2 = VELOCITY");
+    check(axisvocab::errors(0x140) == QStringLiteral("MOTOR_FAILED | ENCODER_FAILED"),
+          "0x140 decodes to two named bits");
+    check(axisvocab::errors(0).isEmpty(), "0 decodes to nothing");
+    check(axisvocab::errors(0x80000000).contains(QStringLiteral("unnamed")),
+          "an unnamed bit is surfaced, not dropped");
 
     std::printf(failures ? "\nFAILED (%d)\n" : "\nALL PASSED\n", failures);
     return failures ? 1 : 0;

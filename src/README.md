@@ -250,6 +250,11 @@ The boot banner is generated from the same table, so the help can no longer
 drift from reality — which is exactly what it did when both were hand-written.
 `help` of `""` hides an entry from the banner.
 
+⚠️ [`can_utilities`](../can_utilities/README.md) builds **its** console from this
+same table, so it will not compile until it has a handler too — mapping the
+command onto CANSimple, or saying it cannot be. That is the point; answer it
+there and move on.
+
 ### A new CAN command
 
 One line in [`include/can_commands.h`](../include/can_commands.h) plus a handler
@@ -261,7 +266,13 @@ CAN_TX_CYCLIC(CMD_YOUR_THING, 100, sendYourThing)         // void(), every 100 m
 ```
 
 That one table drives RX dispatch, the cyclic TX timers **and** the handler
-declarations in the header, so all three stay in step.
+declarations in the header, so all three stay in step. The arbitration ids
+themselves are in [`include/can_ids.h`](../include/can_ids.h), split out so a
+host that cannot compile `STM32_CAN.h` still shares them.
+
+⚠️ A new `CAN_TX_CYCLIC` line fails `can_utilities`' link until it has a decoder
+for the frame — a new broadcast cannot be silently dropped by the control
+station.
 
 ### A new telemetry channel
 
@@ -272,6 +283,27 @@ sides. Also give it a demo value in the GUI's `demosource.cpp`.
 > ⚠️ **Its path is load-bearing**: `GUI/serial_plotter_wasm` includes it by bare
 > name through its CMake include path. Do not move it. The `expr` column must be
 > a valid preprocessor argument — balanced parentheses, **no top-level commas**.
+
+⚠️ `can_utilities` also compiles it, and needs one accessor per channel, so a new
+channel fails its link until somebody decides whether that value is reachable
+over CAN at all. Several are not, and say so explicitly.
+
+### A new axis error bit (or state, or control mode)
+
+One line in [`include/axis_vocab.h`](../include/axis_vocab.h), which carries the
+value **and** the operator-facing name:
+
+```c
+AXIS_ERROR(ERR_YOUR_THING, 0x00001000, "YOUR_THING")
+```
+
+That single line generates the enum in [`gvl/axis_io.h`](../include/gvl/axis_io.h),
+the decoder `can_utilities` uses to log `error 0x0 -> 0x1000 [YOUR_THING]`, and
+the web GUI's CAN Devices page. Before it existed, each of those three carried
+its own copy of the names, so a new bit appeared as undecoded hex in two of them.
+
+`ERR_NONE` is deliberately not in that list — it is the absence of bits, and a
+decoder walking the table would match it against every value.
 
 ### A new shared variable
 

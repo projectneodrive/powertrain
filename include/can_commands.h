@@ -22,6 +22,13 @@
 // Adding a command is one line plus a handler in odrive_can.cpp. Anything not
 // listed is silently ignored on RX (anticogging, trajectory moves, etc.),
 // which is deliberate: an unknown frame from a richer master must not fault us.
+//
+// SECOND CONSUMER: the ESP32 control station (can_utilities/) compiles this same
+// file from the other side of the wire. The CAN_RX list becomes the set of
+// commands it is allowed to send (checked with a static_assert at each send
+// site), and the CAN_TX_CYCLIC list becomes the set of frames it must be able to
+// decode — one missing decoder is a link error there, not a silent gap. So
+// adding a line here can break that build on purpose; see can_utilities/README.md.
 
 // ---- Setters and triggers ---------------------------------------------------
 CAN_RX(CMD_ESTOP,               rxEstop)

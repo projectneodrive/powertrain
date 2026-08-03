@@ -23,6 +23,7 @@ qt_add_executable(serial_plotter_wasm
     src/liveplot.cpp
     src/mainview.cpp
     src/configpage.cpp
+    src/candevicespage.cpp
     src/cheatsheetpage.cpp
 )
 
@@ -31,8 +32,12 @@ target_link_libraries(serial_plotter_wasm PRIVATE
     Qt6::Charts
 )
 
-# The firmware's include/ holds telemetry_schema.h -- the single source of truth
-# for the telemetry channels, shared with src/main.cpp. channels.h #includes it.
+# The firmware's include/ holds the tables this GUI is generated from:
+#   telemetry_schema.h -> src/channels.h   (the plotted channels)
+#   axis_vocab.h       -> src/axisvocab.h  (axis states, modes and error-bit
+#                                           names, decoded on the CAN page)
+# Both are compiled by the firmware and by can_utilities too, which is what
+# stops the three from disagreeing about what a value means.
 target_include_directories(serial_plotter_wasm PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../include"
 )

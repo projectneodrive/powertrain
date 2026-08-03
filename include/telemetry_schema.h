@@ -1,11 +1,16 @@
 // Single source of truth for the streamed telemetry channels.
 //
-// This file is shared by BOTH sides of the wire:
-//   * the firmware  (src/main.cpp, SerialTask)         -- emits "key=value"
+// This file is shared by all three parties on the wire:
+//   * the firmware  (src/prog/prog_console.cpp)         -- emits "key=value"
 //   * the web GUI   (GUI/serial_plotter_wasm channels)  -- plots one chart each
+//   * the ESP32 CAN control station (can_utilities/)    -- re-emits the same
+//     line from CAN telemetry, so the GUI can be pointed at either port
 //
 // Add a channel HERE, once, and it starts streaming from the board AND shows up
 // in the web GUI's graphs/checkboxes automatically -- no other edit required.
+// can_utilities is the one that will not silently ignore you: it needs one
+// accessor per channel, so a new channel fails ITS link until somebody decides
+// whether that value is reachable over CAN at all. That is deliberate.
 //
 // It is an X-macro list: the includer #defines TELEMETRY_CHANNEL (and, for
 // channels that only exist on some firmware builds, TELEMETRY_CHANNEL_HALL)

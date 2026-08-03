@@ -14,37 +14,14 @@
 #pragma once
 #include <Arduino.h>
 #include <STM32_CAN.h>
+#include "can_ids.h"       // odcan::Cmd — shared with the can_utilities host tool
 #include "gvl/axis_io.h"   // AxisIO + the axis state/mode/error vocabulary
 
 namespace odcan {
 
-// ---- CANSimple command ids (low 5 bits of the arbitration id) --------------
-enum Cmd : uint8_t {
-  CMD_HEARTBEAT             = 0x001,
-  CMD_ESTOP                 = 0x002,
-  CMD_GET_MOTOR_ERROR       = 0x003,
-  CMD_GET_ENCODER_ERROR     = 0x004,
-  CMD_GET_SENSORLESS_ERROR  = 0x005,
-  CMD_SET_AXIS_NODE_ID      = 0x006,
-  CMD_SET_AXIS_STATE        = 0x007,
-  CMD_GET_ENCODER_ESTIMATES = 0x009,
-  CMD_GET_ENCODER_COUNT     = 0x00A,
-  CMD_SET_CONTROLLER_MODE   = 0x00B,
-  CMD_SET_INPUT_POS         = 0x00C,
-  CMD_SET_INPUT_VEL         = 0x00D,
-  CMD_SET_INPUT_TORQUE      = 0x00E,
-  CMD_SET_LIMITS            = 0x00F,
-  CMD_GET_IQ                = 0x014,
-  CMD_GET_SENSORLESS_EST    = 0x015,
-  CMD_REBOOT                = 0x016,
-  CMD_GET_BUS_VI            = 0x017,
-  CMD_CLEAR_ERRORS          = 0x018,
-  CMD_SET_LINEAR_COUNT      = 0x019,
-  CMD_SET_POS_GAIN          = 0x01A,
-  CMD_SET_VEL_GAINS         = 0x01B,
-  CMD_GET_ADC_VOLTAGE       = 0x01C,
-  CMD_GET_CONTROLLER_ERROR  = 0x01D,
-};
+// The command ids used to be declared here. They now live in include/can_ids.h
+// so the ESP32 control station (can_utilities/) can include them without
+// dragging in STM32_CAN — see that file's header for the id/vocabulary split.
 
 // AxisState / ControlMode / AxisErrorBits and the AxisIO block itself now live
 // in include/gvl/axis_io.h — they are process data shared with the control

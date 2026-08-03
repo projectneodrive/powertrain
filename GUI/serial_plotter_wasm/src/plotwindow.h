@@ -17,6 +17,7 @@ class QSpinBox;
 class QStackedWidget;
 QT_END_NAMESPACE
 
+class CanDevicesPage;
 class CheatSheetPage;
 class ConfigPage;
 class DemoSource;
@@ -44,6 +45,8 @@ private:
     QStackedWidget *m_stack = nullptr;
     MainView *m_mainView = nullptr;
     ConfigPage *m_configPage = nullptr;
+    CanDevicesPage *m_canPage = nullptr;
+    QWidget *m_canPageHost = nullptr;   // the QScrollArea m_canPage lives in
     CheatSheetPage *m_cheatPage = nullptr;
     DemoSource *m_demo = nullptr;
 

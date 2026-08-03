@@ -22,30 +22,40 @@
 namespace odcan {
 
 // ---- ODrive enums (fw-v0.5.6 values) ---------------------------------------
+// Generated from include/axis_vocab.h, which also carries the operator-facing
+// name of each value. can_utilities and the web GUI's CAN Devices page decode
+// heartbeats and error words from that same table, so a new error bit is named
+// everywhere at once instead of showing up as raw hex in two places out of
+// three. Add values THERE, not here.
 enum AxisState : uint8_t {
-  AXIS_UNDEFINED   = 0,
-  AXIS_IDLE        = 1,
-  AXIS_SENSORLESS  = 5,   // SENSORLESS_CONTROL (fw <= 0.5.1 numbering; see plan)
-  AXIS_MOTOR_CAL   = 4,
-  AXIS_ENC_OFFSET_CAL = 7,
-  AXIS_CLOSED_LOOP = 8,
+#define AXIS_STATE(name, value, label) name = value,
+#define AXIS_MODE(name, value, label)
+#define AXIS_ERROR(name, value, label)
+#include "axis_vocab.h"
+#undef AXIS_ERROR
+#undef AXIS_MODE
+#undef AXIS_STATE
 };
+
 enum ControlMode : uint8_t {
-  CTRL_VOLTAGE  = 0,
-  CTRL_TORQUE   = 1,
-  CTRL_VELOCITY = 2,
-  CTRL_POSITION = 3,
+#define AXIS_STATE(name, value, label)
+#define AXIS_MODE(name, value, label) name = value,
+#define AXIS_ERROR(name, value, label)
+#include "axis_vocab.h"
+#undef AXIS_ERROR
+#undef AXIS_MODE
+#undef AXIS_STATE
 };
+
 enum AxisErrorBits : uint32_t {
-  ERR_NONE              = 0x00000000,
-  ERR_INVALID_STATE     = 0x00000001,
-  ERR_DC_BUS_OVER_VOLTAGE = 0x00000004,   // ODrive fw-0.5.x AxisError value
-  ERR_MOTOR_FAILED      = 0x00000040,
-  ERR_SENSORLESS_FAILED = 0x00000080,
-  ERR_ENCODER_FAILED    = 0x00000100,
-  ERR_CONTROLLER_FAILED = 0x00000200,
-  ERR_WATCHDOG_EXPIRED  = 0x00000800,
-  ERR_ESTOP_REQUESTED   = 0x00004000,
+  ERR_NONE = 0x00000000,   // the absence of bits; not in the table, see there
+#define AXIS_STATE(name, value, label)
+#define AXIS_MODE(name, value, label)
+#define AXIS_ERROR(name, value, label) name = value,
+#include "axis_vocab.h"
+#undef AXIS_ERROR
+#undef AXIS_MODE
+#undef AXIS_STATE
 };
 
 // ---- Shared command + telemetry block --------------------------------------

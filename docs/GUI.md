@@ -42,7 +42,7 @@ a sample config) so every page is usable offline.
 
 ## The pages
 
-Four buttons in the top bar switch what you see; the USB connection, telemetry
+Five buttons in the top bar switch what you see; the USB connection, telemetry
 and log are shared across all of them.
 
 - **Live Plotter** — the command console. Type any serial command (see the
@@ -58,8 +58,64 @@ and log are shared across all of them.
   the live values; the writable rows (current/velocity limit, position gain,
   velocity PID) can be edited and pushed back with **Apply changes**. Hardware
   constants (pole pairs, KV, phase R/L …) are read-only.
+- **CAN Devices** — the state of the CAN link, when you are connected to the
+  **ESP32 control station** ([`can_utilities`](../can_utilities/README.md))
+  rather than to the board directly. See below.
 - **Commands** — a cheat sheet of every serial command the firmware accepts,
   with a **Send** button for the argument-less ones.
+
+## The CAN Devices page
+
+Fed by the `can …` status line the control station emits once a second. It
+exists because this information is **state, not events**: node id, link, the
+four error words and nine bus counters are only meaningful as a live table, and
+printing them as prose is what used to make the serial monitor unreadable.
+
+- **Header** — node id and link status at a glance, green/amber/red.
+- **Device** — axis state and control mode *decoded into words*, heartbeat age,
+  and the heartbeat period / link timeout the station derived from the
+  firmware's own CAN table.
+- **Bus** — the ESP32 TWAI controller's state and every error counter. Counters
+  climbing while the state stays `RUNNING` is the missing-terminator signature,
+  so those cells tint amber rather than leaving you to spot them in a column of
+  zeros.
+- **Error words** — axis / motor / encoder / controller, in hex *and* decoded:
+  `0x140  MOTOR_FAILED | ENCODER_FAILED`. The names come from
+  [`include/axis_vocab.h`](../include/axis_vocab.h), the same table the firmware
+  and the station compile, so a new error bit is named in all three at once.
+  A bit this build has no name for is shown as `unnamed 0x…` rather than
+  dropped — that is the one worth knowing about.
+- **Nodes seen on the bus** — every node id observed, target marked. A node-id
+  mismatch shows up here without turning any tracing on.
+- **CAN functions** — arm / idle / clear errors, plus **E-stop** and **Reboot**,
+  which are CANSimple frames with no equivalent on the board's own console, and
+  **Refresh fault codes** (those words are answered on request, not broadcast).
+  The page also states plainly which commands CANSimple cannot carry at all
+  (`KD`, `JP/JI/JD`, `PI/PD`, `H`) — those need the board's USB port.
+- **Station log level** — how much the ESP32 *sends*. `D3` adds a per-frame CAN
+  trace; the default `D2` keeps it off.
+
+Connected straight to the **board's** USB port instead, no `can …` lines arrive.
+The page says so, and falls back to the frame counters the firmware publishes on
+its telemetry line — the honest subset.
+
+## Reading the serial monitor
+
+The monitor pane under the graphs is filtered and colour-coded by severity.
+**Monitor shows** (Live Plotter panel) picks the floor: *Errors only*,
+*Warnings and above*, *Info and above* (default) or *Everything*.
+
+Two filters, doing different jobs — worth keeping straight:
+
+| Filter | Where | Effect |
+|---|---|---|
+| **Monitor shows** | Live Plotter panel | Hides lines *here*. They are still received, and still captured to CSV — a recording never omits what you had hidden. |
+| **Station log level** (`D0`–`D3`) | CAN Devices page | Stops the ESP32 **sending** them at all. Use this one when the link itself is the bottleneck. |
+
+The station's own log is edge-triggered and deduplicated, so a repeated fault
+appears once followed by `previous line repeated N times` rather than as a wall
+of identical lines. Anything the board emits that predates this format — its
+boot banner, every `AK …` acknowledgement — is still shown, as Info.
 
 > **Firmware:** the Motor Config and PID pages use serial commands
 > (`LC/LV/G/Q`, `KP/KI/KD`) that must be present in the flashed firmware. If

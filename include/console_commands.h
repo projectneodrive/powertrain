@@ -7,6 +7,14 @@
 // line here plus one handler function — the banner can no longer drift from the
 // commands that actually exist, which it used to, being hand-written.
 //
+// SECOND CONSUMER: the ESP32 control station (can_utilities/) builds ITS serial
+// console from this same table, so a keystroke means the same thing whether the
+// GUI is plugged into the board's USB port or into the bridge. Adding a line
+// here fails that build until the bridge says how the command maps onto
+// CANSimple — or states that it does not (several gains are UART-only). The
+// bridge's own extra commands live in can_utilities/lib/can_bridge/bridge_commands.h
+// and must not reuse a key from this file.
+//
 //   CONSOLE_CMD(key, sub, group, help, handler)
 //     key      first character of the command, UPPERCASE. Matching is
 //              case-insensitive, so 'A' also accepts "a".

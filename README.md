@@ -20,7 +20,7 @@ application: e‑bike motor control (torque / velocity, with sensor or sensorles
   **[docs/Architecture.md](docs/Architecture.md)** for the runtime internals,
   concurrency model, timing budget and how to change core components.
 - **[docs/GUI.md](docs/GUI.md)** — the browser‑based **live plotter / PID tuner /
-  motor config** web GUI (talks to the board over USB, no install). Hosted at
+  motor config / CAN devices** web GUI (talks to the board over USB, no install). Hosted at
   `https://projectneodrive.github.io/powertrain/plotter/` (Chrome/Edge only —
   [Web Serial API](https://developer.mozilla.org/docs/Web/API/Web_Serial_API)),
   or run it locally from [`GUI/serial_plotter_wasm/`](GUI/serial_plotter_wasm/README.md).
@@ -35,16 +35,16 @@ The PlatformIO firmware project **is the repository root**.
 | [`GUI/`](GUI/) | Host‑side USB tooling: the Qt‑for‑WebAssembly **web GUI** (`serial_plotter_wasm/`, see [docs/GUI.md](docs/GUI.md)) and a Python desktop plotter (`serial_plotter_fast.py`). Both talk directly to the board's USB serial console. |
 | [`test/`](test/) | Standalone bench sketches (raw encoder read, open‑loop, closed‑loop) — **not** part of the main build. |
 | [`CAN/`](CAN/) | CAN tooling: the ODrive CANSimple **DBC generator** (`create_can_dbc.py`) plus bare‑minimum **Arduino MCP2515** and **ESP32 TWAI** one‑way sender *examples* (`arduino_can_sender/`, `esp32_twai_sender/`) — send‑only, no telemetry parsing. For an actual CAN control station, use `can_utilities` instead (see below). |
+| [`can_utilities/`](can_utilities/README.md) | **ESP32 CANSimple control station** — a separate PlatformIO project, built from its own directory. Compiles the firmware's tables in `include/` so the two ends of the CAN bus cannot drift. See below. |
 | [`docs/`](docs/) | Documentation (start with `Getting_Started.md`). |
 
 ### CAN host tooling: `can_utilities`
 
 The real host‑side CAN control/telemetry tool is
-[`can_utilities`](../can_utilities) — a **separate PlatformIO project living
-alongside this repo** (`neodrive/can_utilities`, not inside `neodrive/powertrain`,
-and not tracked by this repo's git history). It turns an ESP32 (native TWAI, no
-external CAN library needed beyond a 3.3 V transceiver) into a full CANSimple
-bridge:
+**[`can_utilities/`](can_utilities/README.md)** — a **separate PlatformIO
+project inside this repository** (build it from that directory, not from the
+root). It turns an ESP32 (native TWAI, no external CAN library needed beyond a
+3.3 V transceiver) into a full CANSimple bridge:
 
 - **Control:** arm / idle / e‑stop / clear‑errors / reboot, torque / velocity /
   position setpoints, and a spring‑centered potentiometer wired up as a live
@@ -60,10 +60,18 @@ bridge:
   built from debugging this exact link (see the project's own history for
   what a marginal CAN link actually looks like from both sides).
 
-It exposes the same `key=value` telemetry line and a compatible subset of the
-firmware's own serial commands, so `GUI/serial_plotter_fast.py` or the web GUI
-above can be pointed at either the board's direct USB port **or** this ESP32's
-USB‑CDC port interchangeably.
+It exposes the same `key=value` telemetry line and the same serial commands, so
+`GUI/serial_plotter_fast.py` or the web GUI above can be pointed at either the
+board's direct USB port **or** this ESP32's USB‑CDC port interchangeably.
+
+That interchangeability is enforced, not maintained by hand: `can_utilities`
+compiles the firmware's **own** tables — `include/can_ids.h`,
+`can_commands.h`, `console_commands.h`, `telemetry_schema.h` and
+`config/motor_config.h` — so the node id, bit rate, limits, command set and
+telemetry channels have exactly one definition. Adding a command or a channel on
+the firmware side **fails the bridge's build** until it says how that maps onto
+CANSimple, or that it doesn't. See
+[`can_utilities/README.md`](can_utilities/README.md).
 
 ## Firmware status
 
@@ -97,10 +105,10 @@ STM32F405RGT6 @ 168 MHz · DRV8301 6‑PWM (TIM1) · encoder/hall PB4/PB5(/PC9) 
 DRV SPI3 CS PC13 · phase current PC0/PC1 · Vbus PA6 · CAN1 PB8/PB9. Full pin map
 in [`include/config/hw_pinout.h`](include/config/hw_pinout.h).
 
-For host-side CAN control, use [`can_utilities`](../can_utilities) (an ESP32 +
-3.3 V CAN transceiver such as the CJMCU-230) — see above. `CAN/arduino_can_sender/`
-and `CAN/esp32_twai_sender/` remain in this repo as minimal, send-only reference
-examples.
+For host-side CAN control, use [`can_utilities/`](can_utilities/README.md) (an
+ESP32 + 3.3 V CAN transceiver such as the CJMCU-230) — see above.
+`CAN/arduino_can_sender/` and `CAN/esp32_twai_sender/` remain in this repo as
+minimal, send-only reference examples.
 
 Motor/sensor parameters (`CFG_POLE_PAIRS`, `CFG_KV`, etc.) are plain `#define`s
 there. One compile‑time switch remains: **`SENSOR_TYPE`** (`SENSOR_TYPE_QUADRATURE` /

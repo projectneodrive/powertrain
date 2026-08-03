@@ -65,4 +65,67 @@ inline QHash<QString, double> parseLine(const QString &line)
     return fields;
 }
 
+// Same tokenisation, but keeping the values as TEXT.
+//
+// Used for the "can ..." status line, whose fields are not all numbers: the
+// error words are hex ("axis_err=0x140") and the seen-node bitmask is 64 bits,
+// which does not survive a double. Keeping the raw token also lets the CAN
+// Devices page show a value exactly as the board wrote it, which is what an
+// operator comparing it against a datasheet actually wants.
+inline QHash<QString, QString> parseTokens(const QString &line)
+{
+    QHash<QString, QString> fields;
+    const int n = line.size();
+    int i = 0;
+
+    while (i < n) {
+        while (i < n && (line[i] == QLatin1Char(' ') || line[i] == QLatin1Char('\t')))
+            ++i;
+        if (i >= n)
+            break;
+
+        const int keyStart = i;
+        while (i < n) {
+            const QChar c = line[i];
+            if (c.isLetterOrNumber() || c == QLatin1Char('_'))
+                ++i;
+            else
+                break;
+        }
+        if (i == keyStart) {
+            ++i;
+            continue;
+        }
+        const QString key = line.mid(keyStart, i - keyStart);
+
+        if (i >= n || line[i] != QLatin1Char('=')) // bare word, e.g. the "can" prefix
+            continue;
+        ++i;
+
+        const int valStart = i;
+        while (i < n && line[i] != QLatin1Char(' ') && line[i] != QLatin1Char('\t'))
+            ++i;
+        if (i > valStart)
+            fields.insert(key, line.mid(valStart, i - valStart));
+    }
+
+    return fields;
+}
+
+// Read one of those tokens as an integer, accepting both "42" and "0x2A".
+// Returns `fallback` when the key is absent or unparseable, so a field an older
+// firmware does not emit reads as its default rather than as zero.
+inline quint64 tokenUInt(const QHash<QString, QString> &fields, const char *key,
+                         quint64 fallback = 0)
+{
+    const QString v = fields.value(QString::fromLatin1(key));
+    if (v.isEmpty())
+        return fallback;
+    bool ok = false;
+    const quint64 parsed = v.startsWith(QStringLiteral("0x"), Qt::CaseInsensitive)
+                               ? v.mid(2).toULongLong(&ok, 16)
+                               : v.toULongLong(&ok, 10);
+    return ok ? parsed : fallback;
+}
+
 } // namespace telemetry

@@ -19,16 +19,25 @@ TelemetryHub::TelemetryHub()
 
 void TelemetryHub::onLine(const QString &line)
 {
-    // Config dump: "cfg key=val key=val ...". Checked before the telemetry
-    // path because it also lacks a 't' field.
-    if (line.startsWith(QStringLiteral("cfg"))) {
+    // Config dump: "cfg key=val ...". Checked before the telemetry path because
+    // it also lacks a 't' field.
+    if (line.startsWith(QStringLiteral("cfg "))) {
         emit configReceived(telemetry::parseLine(line));
+        return;
+    }
+
+    // CAN device/bus status from the ESP32 control station, once a second.
+    // Routed to the CAN Devices page and NEVER to the monitor pane: it is a
+    // table's worth of counters, and printing it as prose is what made the log
+    // unusable.
+    if (line.startsWith(QStringLiteral("can "))) {
+        emit canStatus(telemetry::parseTokens(line));
         return;
     }
 
     const QHash<QString, double> fields = telemetry::parseLine(line);
     if (!fields.contains(QStringLiteral("t"))) {
-        emit message(line);      // firmware log / AK text
+        emit logEvent(logevt::parse(line));
         return;
     }
 
