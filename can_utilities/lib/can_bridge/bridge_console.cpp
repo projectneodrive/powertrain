@@ -293,9 +293,14 @@ void cmdLogLevel(float v) {
 }
 
 void cmdPotRest(float) {
-  const int old_rest = g_ctx.pot->calibrateRest();
-  Serial.print("AK Z: pot_rest "); Serial.print(old_rest);
-  Serial.print(" -> ");            Serial.println(g_ctx.pot->rest());
+  // Blocks for ~64 ms while it averages. That is well inside what the RX queue
+  // absorbs (BRIDGE_RX_QUEUE_LEN holds ~2.5x the frames the board sends in that
+  // time), and it is an explicit operator action, not something on the hot path.
+  const int old_rest = g_ctx.pot->rest();
+  const pot::RestMeasurement m = g_ctx.pot->calibrateRest();
+  Serial.printf("AK Z: pot_rest %d -> %d (spread %d, %s)\n", old_rest, m.adc, m.spread,
+                m.ok() ? "steady" : (!m.stable ? "UNSTEADY - hold it still and repeat"
+                                               : "near a rail - check the wiring"));
 }
 
 void cmdHelp(float) { printBanner(); }

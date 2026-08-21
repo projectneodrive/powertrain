@@ -3,6 +3,8 @@
 // ============================================================================
 #include "pot_input.h"
 
+#include "log.h"
+
 namespace pot {
 namespace {
 
@@ -32,10 +34,65 @@ float potToVelocity(int adc, int rest) {
 
 }  // namespace
 
-void Joystick::begin() {
-  _adc_last    = analogRead(POT_PIN);
-  _adc_rest    = POT_ADC_REST_DEFAULT;
+// Average POT_CAL_SAMPLES readings, and report the spread while we are at it.
+// The spread is what actually decides whether the number means anything: a pot
+// held still reads within a few counts, one being moved reads hundreds apart,
+// and a pin with nothing connected wanders more than either.
+RestMeasurement Joystick::measure() const {
+  RestMeasurement m;
+
+  long sum = 0;
+  int lo = POT_ADC_MAX;
+  int hi = POT_ADC_MIN;
+  for (int i = 0; i < POT_CAL_SAMPLES; i++) {
+    const int v = analogRead(POT_PIN);
+    sum += v;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+    delay(POT_CAL_SAMPLE_MS);
+  }
+
+  m.adc     = (int)(sum / POT_CAL_SAMPLES);
+  m.spread  = hi - lo;
+  m.stable  = m.spread <= POT_CAL_MAX_SPREAD;
+  m.inRange = (m.adc >= POT_ADC_MIN + POT_CAL_RAIL_MARGIN) &&
+              (m.adc <= POT_ADC_MAX - POT_CAL_RAIL_MARGIN);
+  return m;
+}
+
+RestMeasurement Joystick::begin() {
+  RestMeasurement m;
+
+  for (int attempt = 1; attempt <= POT_CAL_ATTEMPTS; attempt++) {
+    m = measure();
+    if (m.ok()) {
+      _adc_rest   = m.adc;
+      _calibrated = true;
+      LOG_I("POT", "rest calibrated at boot: adc=%d (spread %d, estimate was %d)",
+            m.adc, m.spread, (int)POT_ADC_REST_DEFAULT);
+      break;
+    }
+    LOG_W("POT", "rest calibration attempt %d/%d rejected: adc=%d spread=%d (%s)",
+          attempt, (int)POT_CAL_ATTEMPTS, m.adc, m.spread,
+          !m.stable ? "reading unstable - pot being moved, or nothing connected to the pin"
+                    : "sitting on a rail - full deflection, or a broken wiper");
+  }
+
+  if (!_calibrated) {
+    // Usable, but its zero is the ohm-meter estimate rather than a measurement.
+    // Said once, loudly, because the symptom otherwise looks like a possessed
+    // motor: a small commanded velocity with the pot physically at rest.
+    _adc_rest = POT_ADC_REST_DEFAULT;
+    LOG_W("POT", "using the estimated rest point %d - hold the pot at rest and send Z",
+          (int)POT_ADC_REST_DEFAULT);
+  }
+
+  // Seeding this from the same measurement is what stops the very first poll()
+  // from looking like a large operator movement and firing a command.
+  _adc_last    = m.adc;
   _initialised = false;
+  _last_poll   = 0;
+  return m;
 }
 
 bool Joystick::poll(uint32_t now_ms, float& vel_rad_s) {
@@ -71,10 +128,25 @@ bool Joystick::poll(uint32_t now_ms, float& vel_rad_s) {
   return true;
 }
 
-int Joystick::calibrateRest() {
-  const int old_rest = _adc_rest;
-  _adc_rest = analogRead(POT_PIN);
-  return old_rest;
+RestMeasurement Joystick::calibrateRest() {
+  const RestMeasurement m = measure();
+
+  // Accepted either way — see the header. A warning is enough: the operator
+  // asked for this, and the numbers below tell them if it looked wrong.
+  if (!m.stable) {
+    LOG_W("POT", "rest set to %d but the reading was unstable (spread %d) - "
+                 "hold the pot still and send Z again", m.adc, m.spread);
+  } else if (!m.inRange) {
+    LOG_W("POT", "rest set to %d, which is within %d counts of a rail - one "
+                 "direction will have almost no travel", m.adc, (int)POT_CAL_RAIL_MARGIN);
+  }
+
+  _adc_rest   = m.adc;
+  _calibrated = true;
+  // The pot has not moved, but the reference it is measured against just did:
+  // without this the next poll() reads the same jump as an operator input.
+  _adc_last   = m.adc;
+  return m;
 }
 
 }  // namespace pot

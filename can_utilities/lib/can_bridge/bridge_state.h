@@ -88,6 +88,17 @@ struct State {
   Commanded c;
   uint32_t  sample_index = 0;
   bool      link_up      = false;   // a heartbeat from the target has been seen
+
+  // The one-shot link-loss safety stop has fired and not yet been re-armed.
+  // Surfaced on the `can ...` line so the GUI can say WHY the axis is idle —
+  // otherwise a disarmed motor and a motor nobody armed look identical.
+  bool      safety_stopped = false;
+
+  // Worst scan duration since the last status line. The number that says
+  // whether the loop is keeping up — a healthy scan is microseconds, and
+  // anything approaching the heartbeat period means the link checks are
+  // sampling too coarsely to be trusted. Consumed by the `can ...` line.
+  uint32_t  scan_max_ms = 0;
 };
 
 }  // namespace bridge

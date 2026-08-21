@@ -29,8 +29,9 @@
 //
 //  WIRE FORMAT — one line, parsed by the GUI (src/logevent.h):
 //
-//      log <sev> <tag> <free text>
+//      log <ms> <sev> <tag> <free text>
 //
+//    <ms>   station uptime, same clock as the telemetry line's `t=`
 //    <sev>  one of E W I D
 //    <tag>  short uppercase category: SYS CAN BUS LINK AXIS POT
 //

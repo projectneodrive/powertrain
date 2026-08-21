@@ -39,8 +39,16 @@ char levelChar(Level lv) {
 }
 
 // The one function that actually reaches the serial port.
+//
+// The timestamp is the station's millis(), matching the `t=` on the telemetry
+// line so the two streams can be lined up. It is here because for a fault that
+// RECURS, the period is the diagnosis — a link dropping every 3.5 s is a board
+// rebooting, every 60 s is something thermal — and without a timestamp the only
+// way to measure it is to sit and watch with a stopwatch.
 void emit(Level lv, const char* tag, const char* text) {
   Serial.print("log ");
+  Serial.print(millis());
+  Serial.print(' ');
   Serial.print(levelChar(lv));
   Serial.print(' ');
   Serial.print(tag);

@@ -31,5 +31,7 @@ BRIDGE_CMD('F', 0, GRP_CMDS,   "F fault codes",        cmdFaults)
 // toggle because "too much log" has more than two useful answers — the trace is
 // only one of the things that was drowning the monitor pane.
 BRIDGE_CMD('D', 0, GRP_BRIDGE, "D<0-3> log level",     cmdLogLevel)
+// Z re-runs the rest-point calibration that already ran at boot — for when the
+// pot was being held at power-up, or has been re-fitted.
 BRIDGE_CMD('Z', 0, GRP_BRIDGE, "Z pot rest cal",       cmdPotRest)
 BRIDGE_CMD('?', 0, GRP_BRIDGE, "? help",               cmdHelp)

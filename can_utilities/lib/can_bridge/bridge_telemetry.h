@@ -22,6 +22,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "bridge_axis.h"
 #include "bridge_state.h"
 #include "can_diag.h"
 #include "cansimple.h"
@@ -64,7 +65,10 @@ bool emitTelemetry(uint32_t now_ms, State& state, const cansimple::Link& link,
 //  `axis_err=0x140` survives as text and is decoded with the same axis_vocab.h
 //  table the firmware and this station use.
 // ---------------------------------------------------------------------------
-bool emitCanStatus(uint32_t now_ms, const State& state, const cansimple::Link& link,
-                   candiag::Diagnostics& diag);
+// `state` and `axis` are non-const because the line CONSUMES two high-water
+// marks (worst scan, worst heartbeat gap): reporting and resetting has to be
+// one step, or two readers each see a fraction of the interval.
+bool emitCanStatus(uint32_t now_ms, State& state, Axis& axis,
+                   const cansimple::Link& link, candiag::Diagnostics& diag);
 
 }  // namespace bridge

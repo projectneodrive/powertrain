@@ -119,8 +119,8 @@ bool emitTelemetry(uint32_t now_ms, State& s, const cansimple::Link& link,
 }
 
 // ---------------------------------------------------------------------------
-bool emitCanStatus(uint32_t now_ms, const State& s, const cansimple::Link& link,
-                   candiag::Diagnostics& diag) {
+bool emitCanStatus(uint32_t now_ms, State& s, Axis& axis,
+                   const cansimple::Link& link, candiag::Diagnostics& diag) {
   static uint32_t last = 0;
   if (now_ms - last < BRIDGE_CAN_STATUS_MS) {
     return false;
@@ -134,11 +134,12 @@ bool emitCanStatus(uint32_t now_ms, const State& s, const cansimple::Link& link,
 
   // Heartbeat age is what makes "link=0" actionable: 600 ms means it just
   // dropped, 90000 ms means it was never there.
-  const uint32_t hb_age = now_ms - s.m.last_heartbeat_ms;
+  const uint32_t hb_age = axis.heartbeatAge(now_ms);
   const uint64_t nodes  = diag.seenNodes();
 
   Serial.printf(
-      "can node=%u link=%u hb_age=%lu hb_period=%lu hb_timeout=%lu bus=%d "
+      "can node=%u link=%u hb_age=%lu hb_period=%lu hb_timeout=%lu hb_max=%lu "
+      "drops=%lu scan_max=%lu stop_after=%lu stopped=%u bus=%d "
       "axis=%u mode=%u axis_err=0x%lX motor_err=0x%lX enc_err=0x%lX ctrl_err=0x%lX "
       "tx_ok=%lu tx_fail=%lu rx=%lu tx_ec=%lu rx_ec=%lu tx_failed=%lu rx_missed=%lu "
       "rx_overrun=%lu arb_lost=%lu bus_ec=%lu baud=%lu nodes=0x%08lX%08lX loglvl=%u\n",
@@ -147,6 +148,11 @@ bool emitCanStatus(uint32_t now_ms, const State& s, const cansimple::Link& link,
       (unsigned long)hb_age,
       (unsigned long)Axis::kHeartbeatPeriodMs,
       (unsigned long)Axis::kLinkTimeoutMs,
+      (unsigned long)axis.takeMaxHeartbeatGap(),
+      (unsigned long)axis.linkDropCount(),
+      (unsigned long)s.scan_max_ms,
+      (unsigned long)Axis::kLinkLossStopMs,
+      (unsigned)(s.safety_stopped ? 1 : 0),
       bus.state,
       (unsigned)s.m.heartbeat_state,
       (unsigned)s.c.control_mode,
@@ -167,6 +173,8 @@ bool emitCanStatus(uint32_t now_ms, const State& s, const cansimple::Link& link,
       (unsigned long)CFG_CAN_BAUD,
       (unsigned long)(nodes >> 32), (unsigned long)(nodes & 0xFFFFFFFFul),
       (unsigned)logx::level());
+
+  s.scan_max_ms = 0;   // high-water mark consumed; next line reports the next second
   return true;
 }
 

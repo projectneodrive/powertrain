@@ -57,7 +57,8 @@ private:
 
     // Device rows
     enum DevRow { DevNode, DevLink, DevState, DevMode, DevHbAge, DevHbPeriod,
-                  DevTimeout, DevBaud, DevRowCount };
+                  DevHbWorst, DevTimeout, DevDrops, DevScanMax, DevSafetyStop, DevBaud,
+                  DevRowCount };
     // Bus rows (the ESP32's own TWAI controller)
     enum BusRow { BusState, BusTxOk, BusTxFail, BusRx, BusTxEc, BusRxEc,
                   BusFailed, BusMissed, BusOverrun, BusArbLost, BusErrCount,

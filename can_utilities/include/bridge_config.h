@@ -99,6 +99,52 @@
 #define BRIDGE_HEARTBEAT_MISSES 5
 
 // ---------------------------------------------------------------------------
+//  Link-loss safety stop
+// ---------------------------------------------------------------------------
+// Time since the last heartbeat after which the station disarms the axis.
+//
+// Deliberately much longer than the link-lost timeout above: losing the link is
+// worth REPORTING immediately, but a brief dropout — one dropped frame, a
+// connector nudged, the board rebooting — is not worth stopping a motor for.
+// This is the "it is really gone" threshold.
+//
+// The stop is sent ONCE, on the edge. It is not repeated, so anything you type
+// afterwards still reaches the bus: when the link is the broken thing, the
+// console has to stay usable. Set to 0 to disable the safety stop entirely.
+//
+// Must be >= the link-lost timeout, or the axis would be disarmed before the
+// link is even declared down; Axis::kLinkLossStopMs static_asserts that.
+#define BRIDGE_LINK_LOSS_STOP_MS 3000
+
+// A scan longer than this means THIS STATION was blocked, not that the board
+// went quiet.
+//
+// 250 ms is not arbitrary: at the ~130 frames/s the board broadcasts, that is
+// how long BRIDGE_RX_QUEUE_LEN takes to fill. Below it a stall costs nothing —
+// the queue holds the frames and the next scan drains them. Above it the driver
+// starts dropping, which is the point at which a stall becomes visible as lost
+// telemetry rather than just late telemetry.
+//
+// It must also stay well above normal scan jitter. A scan that emits the
+// telemetry line spends ~10 ms in Serial, and the once-a-second `can` line
+// ~30 ms; a threshold near those would treat ordinary output as a stall and
+// credit time back constantly — see the cap in Axis::creditStall for why that
+// would be dangerous rather than merely wrong.
+//
+// It matters because silence you did not observe is not evidence. Without this
+// check a 3 s stall made the age of the last heartbeat jump straight past both
+// the link-lost timeout AND the safety-stop timeout in a single scan, so the
+// station declared a link loss and disarmed the motor in the same breath — for
+// a board that was transmitting perfectly the whole time, and whose next
+// heartbeat arrived 99 ms later. Disarming a motor because we stopped looking
+// is the worst failure this thing can have.
+// Overridable so the regression test can switch the check off and demonstrate
+// the failure it prevents; there is no reason to change it in a real build.
+#ifndef BRIDGE_SCAN_STALL_MS
+#define BRIDGE_SCAN_STALL_MS 250
+#endif
+
+// ---------------------------------------------------------------------------
 //  Event log (lib/logging)
 // ---------------------------------------------------------------------------
 // Default ceiling: 0=ERROR 1=WARN 2=INFO 3=DEBUG. INFO means state changes and
@@ -136,10 +182,30 @@
 // ESTIMATE of the rest ADC value — it assumes the measured resistance span maps
 // linearly onto the full 0..POT_ADC_MAX swing, which depends on the pot's true
 // total resistance and the exact divider wiring, neither of which is known
-// here. Used only as the startup default: send 'Z' with the pot at physical
-// rest to capture the real value at runtime.
+// here. It is now only the FALLBACK, used when the boot calibration below is
+// rejected; the pot is measured at startup instead.
 #define POT_OHM_MIN          160.0f
 #define POT_OHM_MAX          4300.0f
 #define POT_OHM_REST         3300.0f
 #define POT_ADC_REST_DEFAULT \
   ((int)((POT_OHM_REST - POT_OHM_MIN) / (POT_OHM_MAX - POT_OHM_MIN) * POT_ADC_MAX + 0.5f))
+
+// ---- Startup rest-point calibration ----------------------------------------
+// A spring-return pot is AT rest when the board powers up, which is the one
+// moment its rest point can be measured without asking anybody to hold it
+// there. So the station measures it, instead of trusting the estimate above.
+#define POT_CAL_SAMPLES      32     // averaged, to get under the ADC noise
+#define POT_CAL_SAMPLE_MS    2      // -> ~64 ms per attempt
+#define POT_CAL_ATTEMPTS     3      // a hand still on the pot at power-up
+
+// Max spread (max-min) across the samples for a reading to count as "at rest".
+// This is the check that catches the two ways boot calibration goes wrong: the
+// pot being MOVED while it is measured, and nothing being connected to the pin
+// at all — a floating ESP32 ADC input wanders far more than this.
+#define POT_CAL_MAX_SPREAD   40
+
+// A rest point this close to either rail is not a rest point: it is full
+// deflection, or a broken wiper reading a supply rail. Accepting it would leave
+// one direction of travel with no span at all, and — worse — would make the
+// joystick command full speed while sitting physically at rest.
+#define POT_CAL_RAIL_MARGIN  200

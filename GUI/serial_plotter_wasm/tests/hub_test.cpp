@@ -74,13 +74,22 @@ int main(int argc, char **argv)
     check(lastLog.tag == QStringLiteral("AK"), "AK line tagged AK");
     check(lastLog.level == logevt::Info, "AK line is Info");
 
-    feed("log E AXIS error 0x0 -> 0x140 [MOTOR_FAILED|ENCODER_FAILED]\n");
-    check(lastLog.level == logevt::Error, "'log E ...' -> Error");
+    feed("log 12345 E AXIS error 0x0 -> 0x140 [MOTOR_FAILED|ENCODER_FAILED]\n");
+    check(lastLog.level == logevt::Error, "'log <ms> E ...' -> Error");
     check(lastLog.tag == QStringLiteral("AXIS"), "tag extracted");
     check(lastLog.text.startsWith(QStringLiteral("error 0x0")), "text has the prefix stripped");
+    check(lastLog.hasTime && lastLog.tMs == 12345, "timestamp extracted");
+    check(logevt::timeLabel(lastLog) == QStringLiteral("12.345"), "timestamp rendered as s.mmm");
 
-    feed("log D CAN TX id=0x00D CMD_SET_INPUT_VEL len=8\n");
-    check(lastLog.level == logevt::Debug, "'log D ...' -> Debug");
+    // A station flashed with an older build emits no timestamp. The two
+    // firmwares are flashed separately, so this is a normal state to be in.
+    feed("log W LINK lost with node 0\n");
+    check(lastLog.level == logevt::Warn, "timestamp-less line still parses");
+    check(lastLog.tag == QStringLiteral("LINK"), "...and still yields its tag");
+    check(!lastLog.hasTime, "...and is marked as having no timestamp");
+
+    feed("log 500 D CAN TX id=0x00D CMD_SET_INPUT_VEL len=8\n");
+    check(lastLog.level == logevt::Debug, "'log <ms> D ...' -> Debug");
 
     feed("--- SimpleFOC + FreeRTOS + CANSimple ---\n");
     check(lastLog.level == logevt::Info, "unstructured firmware text -> Info");
@@ -89,6 +98,10 @@ int main(int argc, char **argv)
           "unstructured text passed through verbatim");
 
     std::printf("CAN status path:\n");
+    // Snapshot rather than a hardcoded total: the point of the last check is
+    // that the can line adds NOTHING to the log, and a literal count silently
+    // becomes a different assertion the moment anyone adds a feed above.
+    const int logCountBeforeCan = logCount;
     feed("can node=3 link=1 hb_age=8 bus=1 axis=8 mode=2 axis_err=0x140 motor_err=0x0 "
          "tx_ok=1234 rx=5678 bus_ec=0 baud=500000 nodes=0x0000000000000009 loglvl=2\n");
     check(canCount == 1, "can line -> canStatus");
@@ -96,7 +109,7 @@ int main(int argc, char **argv)
     check(telemetry::tokenUInt(lastCan, "axis_err") == 0x140, "axis_err=0x140 (hex)");
     check(telemetry::tokenUInt(lastCan, "nodes") == 0x9, "64-bit node mask survives");
     check(telemetry::tokenUInt(lastCan, "absent", 42) == 42, "missing key -> fallback");
-    check(logCount == 4, "the can line did NOT reach the log");
+    check(logCount == logCountBeforeCan, "the can line did NOT reach the log");
 
     std::printf("Shared axis vocabulary (include/axis_vocab.h):\n");
     check(axisvocab::state(8) == QStringLiteral("CLOSED_LOOP"), "state 8 = CLOSED_LOOP");

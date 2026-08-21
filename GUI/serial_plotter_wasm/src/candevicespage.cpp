@@ -70,7 +70,11 @@ CanDevicesPage::CanDevicesPage(QWidget *parent) : QWidget(parent)
                                 QStringLiteral("Control mode"),
                                 QStringLiteral("Heartbeat age"),
                                 QStringLiteral("Heartbeat period"),
+                                QStringLiteral("Worst gap (last 1 s)"),
                                 QStringLiteral("Link timeout"),
+                                QStringLiteral("Link drops"),
+                                QStringLiteral("Worst scan (last 1 s)"),
+                                QStringLiteral("Safety stop"),
                                 QStringLiteral("Bit rate")});
 
     m_busTable = buildTable({QStringLiteral("Controller state"),
@@ -322,8 +326,61 @@ void CanDevicesPage::onCanStatus(const QHash<QString, QString> &f)
     // dropped, 90 s means it was never there.
     setCell(m_deviceTable, DevHbAge, QStringLiteral("%1 ms").arg(hbAge),
             QLatin1String(linkUp ? "" : kBad));
-    setCell(m_deviceTable, DevHbPeriod, QStringLiteral("%1 ms").arg(tokenUInt(f, "hb_period")));
+    const quint64 hbPeriod = tokenUInt(f, "hb_period");
+    setCell(m_deviceTable, DevHbPeriod, QStringLiteral("%1 ms").arg(hbPeriod));
+
+    // The row that says WHY the link keeps dropping. While the link is up a gap
+    // can never reach the timeout — exceeding it is what declares the loss — so
+    // this measures how ragged the link is *while it works*:
+    //   near the heartbeat period  -> clean; a drop means the sender stopped
+    //   well above it              -> frames already being lost; suspect wiring
+    const quint64 hbMax = tokenUInt(f, "hb_max");
+    const quint64 drops = tokenUInt(f, "drops");
+    QString worst = hbMax ? QStringLiteral("%1 ms").arg(hbMax) : QStringLiteral("--");
+    QString worstColor;
+    if (hbPeriod && hbMax > hbPeriod * 2) {
+        worst += QStringLiteral("  — frames being lost, suspect wiring/termination");
+        worstColor = QLatin1String(kWarn);
+    } else if (hbPeriod && hbMax && drops) {
+        worst += QStringLiteral("  — clean while up, so drops are the sender stopping");
+    }
+    setCell(m_deviceTable, DevHbWorst, worst, worstColor);
+
     setCell(m_deviceTable, DevTimeout, QStringLiteral("%1 ms").arg(tokenUInt(f, "hb_timeout")));
+
+    setCell(m_deviceTable, DevDrops, QStringLiteral("%1 since boot").arg(drops),
+            drops ? QLatin1String(kWarn) : QString());
+
+    // Is the station's own loop keeping up? A healthy scan is under a
+    // millisecond. Approaching the heartbeat period means the link checks are
+    // sampling too coarsely to be trusted -- which is what the frame trace at
+    // D3 does, and why it used to make the axis drop out.
+    const quint64 scanMax = telemetry::tokenUInt(f, "scan_max");
+    QString scan = QStringLiteral("%1 ms").arg(scanMax);
+    QString scanColor;
+    if (hbPeriod && scanMax >= hbPeriod) {
+        scan += QStringLiteral("  — loop is not keeping up; lower the log level");
+        scanColor = QLatin1String(kWarn);
+    }
+    setCell(m_deviceTable, DevScanMax, scan, scanColor);
+
+    // The one-shot link-loss stop. Worth its own row because a disarmed axis
+    // and an axis nobody armed look identical from the outside — this is the
+    // row that says which one you are looking at.
+    const quint64 stopAfter = tokenUInt(f, "stop_after");
+    const bool stopped = tokenUInt(f, "stopped") != 0;
+    if (stopAfter == 0) {
+        setCell(m_deviceTable, DevSafetyStop, QStringLiteral("disabled"), QLatin1String(kMuted));
+    } else if (stopped) {
+        setCell(m_deviceTable, DevSafetyStop,
+                QStringLiteral("FIRED — axis disarmed, press Arm (A) once the link is back"),
+                QLatin1String(kBad));
+    } else {
+        setCell(m_deviceTable, DevSafetyStop,
+                QStringLiteral("armed — disarms %1 s after the heartbeat stops")
+                    .arg(stopAfter / 1000.0, 0, 'f', 1));
+    }
+
     setCell(m_deviceTable, DevBaud, QStringLiteral("%1 kbit/s").arg(baud / 1000));
 
     // Bus. A non-zero error counter while the controller still reports RUNNING
@@ -355,17 +412,23 @@ void CanDevicesPage::onCanStatus(const QHash<QString, QString> &f)
     auto errorRow = [&](ErrRow row, const char *key, bool decode) {
         const quint32 v = quint32(tokenUInt(f, key));
         QString text = QStringLiteral("0x%1").arg(v, 0, 16);
-        if (v == 0) {
+        if (!decode) {
+            text += QStringLiteral("  — reserved, this firmware reports through Axis");
+        } else if (v == 0) {
             text += QStringLiteral("  (none)");
-        } else if (decode) {
+        } else {
             text += QStringLiteral("  %1").arg(axisvocab::errors(v));
         }
-        setCell(m_errorTable, row, text, v ? QLatin1String(kBad) : QString());
+        setCell(m_errorTable, row, text,
+                (decode && v) ? QLatin1String(kBad)
+                              : (decode ? QString() : QLatin1String(kMuted)));
     };
     errorRow(ErrAxis, "axis_err", true);
-    // The per-subsystem words are ODrive's own MotorError/EncoderError/
-    // ControllerError enums; this firmware does not populate them with named
-    // bits, so there is nothing honest to decode them against.
+    // These three are RESERVED and always zero. The firmware reports every
+    // condition through the axis word, for which axis_vocab.h defines shared
+    // names; the sub-words exist only so the ODrive Get_*_Error frames are
+    // well-formed. Showing a bare "0x0" invites the reader to conclude the
+    // subsystem is healthy, which is not what it means — say so instead.
     errorRow(ErrMotor, "motor_err", false);
     errorRow(ErrEncoder, "enc_err", false);
     errorRow(ErrController, "ctrl_err", false);
@@ -418,9 +481,15 @@ void CanDevicesPage::onLogEvent(const logevt::Event &e)
     if (int(e.level) > m_filterCombo->currentIndex())
         return;
 
+    // Timestamped, because on this page the question is almost always "how
+    // often" rather than "what" — a link dropping every 3.5 s is a board
+    // rebooting, every 60 s is something thermal, and the text is identical.
+    const QString when = logevt::timeLabel(e);
     m_logView->appendHtml(
-        QStringLiteral("<span style='color:%1'>[%2] %3</span>")
-            .arg(QLatin1String(logevt::levelColor(e.level)), e.tag, e.text.toHtmlEscaped()));
+        QStringLiteral("<span style='color:%1'>%2[%3] %4</span>")
+            .arg(QLatin1String(logevt::levelColor(e.level)),
+                 when.isEmpty() ? QString() : QStringLiteral("%1  ").arg(when, 10),
+                 e.tag, e.text.toHtmlEscaped()));
 }
 
 void CanDevicesPage::onConnectionChanged(bool connected, const QString &message)

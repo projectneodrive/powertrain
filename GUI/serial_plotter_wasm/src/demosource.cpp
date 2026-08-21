@@ -124,7 +124,8 @@ void DemoSource::tick()
         const quint32 axisErr = faulted ? 0x140u : 0u;
         const int axisState = faulted ? 1 : 8;
         line += QStringLiteral(
-                    "can node=0 link=1 hb_age=%1 hb_period=100 hb_timeout=500 bus=1 "
+                    "can node=0 link=1 hb_age=%1 hb_period=100 hb_timeout=500 "
+                    "hb_max=104 drops=0 scan_max=2 stop_after=3000 stopped=0 bus=1 "
                     "axis=%2 mode=2 axis_err=0x%3 motor_err=0x%4 enc_err=0x0 ctrl_err=0x0 "
                     "tx_ok=%5 tx_fail=0 rx=%6 tx_ec=0 rx_ec=0 tx_failed=0 rx_missed=0 "
                     "rx_overrun=0 arb_lost=0 bus_ec=%7 baud=500000 "

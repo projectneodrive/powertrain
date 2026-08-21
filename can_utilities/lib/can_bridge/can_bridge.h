@@ -50,6 +50,9 @@ class ControlStation {
   State                _state;
   Axis                 _axis{_link, _state};
   pot::Joystick        _pot;
+
+  // Start of the previous scan, for the stall check at the top of poll().
+  uint32_t             _last_scan_ms = 0;
 };
 
 extern ControlStation station;

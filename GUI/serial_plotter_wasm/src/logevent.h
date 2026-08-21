@@ -30,6 +30,10 @@ struct Event {
     QString tag;      // "SYS", "AK", ... may be empty for unstructured lines
     QString text;     // message body, prefix stripped
     QString raw;      // the line exactly as received (what gets logged to CSV)
+    // Station uptime in ms, same clock as the telemetry line's `t=`. Absent on
+    // lines that predate the format (the board's own output, "AK ..." acks).
+    quint64 tMs = 0;
+    bool    hasTime = false;
 };
 
 inline const char *levelName(Level l)
@@ -55,6 +59,17 @@ inline const char *levelColor(Level l)
     }
 }
 
+// "12.345" — seconds since the station booted, to the millisecond. Empty when
+// the line carried no timestamp, so a caller can prepend it unconditionally.
+inline QString timeLabel(const Event &e)
+{
+    if (!e.hasTime)
+        return QString();
+    return QStringLiteral("%1.%2")
+        .arg(e.tMs / 1000)
+        .arg(e.tMs % 1000, 3, 10, QLatin1Char('0'));
+}
+
 inline Level levelFromChar(QChar c)
 {
     switch (c.toUpper().toLatin1()) {
@@ -70,9 +85,24 @@ inline Event parse(const QString &line)
     Event e;
     e.raw = line;
 
-    // "log <sev> <tag> <text>"
+    // "log <ms> <sev> <tag> <text>"
+    //
+    // The timestamp is parsed leniently — if the first token is not a number,
+    // it is taken as the severity and the line is treated as timestamp-less.
+    // The two firmwares are flashed separately, so a station running an older
+    // build than this GUI is a normal state to be in, not an error.
     if (line.startsWith(QStringLiteral("log "))) {
-        const int sevPos = 4;
+        int sevPos = 4;
+        const int firstEnd = line.indexOf(QLatin1Char(' '), sevPos);
+        if (firstEnd > sevPos) {
+            bool isNum = false;
+            const quint64 t = line.mid(sevPos, firstEnd - sevPos).toULongLong(&isNum);
+            if (isNum) {
+                e.tMs = t;
+                e.hasTime = true;
+                sevPos = firstEnd + 1;
+            }
+        }
         if (line.size() > sevPos + 1 && line.at(sevPos + 1) == QLatin1Char(' ')) {
             e.level = levelFromChar(line.at(sevPos));
             const int tagStart = sevPos + 2;

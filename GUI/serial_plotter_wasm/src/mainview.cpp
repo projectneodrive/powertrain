@@ -380,10 +380,14 @@ void MainView::onLogEvent(const logevt::Event &e)
         return;
 
     // Untagged lines (the board's own banner text) get no bracket, so the
-    // firmware's boot output still reads the way it was written.
-    const QString body = e.tag.isEmpty()
+    // firmware's boot output still reads the way it was written. The timestamp
+    // is what turns a recurring fault into a measurable period.
+    QString body = e.tag.isEmpty()
         ? e.text.toHtmlEscaped()
         : QStringLiteral("[%1] %2").arg(e.tag, e.text.toHtmlEscaped());
+    const QString when = logevt::timeLabel(e);
+    if (!when.isEmpty())
+        body.prepend(QStringLiteral("%1  ").arg(when, 10));
     m_logView->appendHtml(QStringLiteral("<span style='color:%1'>%2</span>")
                               .arg(QLatin1String(logevt::levelColor(e.level)), body));
 }
