@@ -1,31 +1,44 @@
 // ============================================================================
-//  prog_control.cpp — the axis state machine.
+//  control.cpp — the axis state machine. See app.h.
 //
 //  Scan order matters and mirrors the original: the reboot/clear requests and
 //  the gain updates are serviced first (they must work even while faulted),
 //  then the blocking commissioning sequences take the scan for themselves if
 //  requested, then arming, then the runtime setpoint.
 // ============================================================================
-#include "prog/prog_control.h"
-#include "io/io_motor.h"
-#include "io/io_gate.h"
-#include "io/io_brake.h"
-#include "fb/fb_vel_ramp.h"
-#include "seq/seq_motor_char.h"
-#include "seq/seq_hall_cal.h"
-#include "gvl/gvl.h"
+#include "app.h"
+
 #include "config/motor_config.h"
-#include "config/plc_config.h"
+#include "config/tasks_config.h"
+#include "io/io_brake.h"
+#include "io/io_gate.h"
+#include "io/io_motor.h"
+#include "state.h"
+#include "util/timers.h"
 
 using namespace odcan;
 
-namespace prog {
+namespace app {
+namespace control {
+namespace {
 
-PrgControl prgControl;
+// Ramp the velocity setpoint rather than stepping it. Without a ramp, a step
+// (V5 -> V10) makes a bench supply dip then overshoot, and the regen spike can
+// trip the bus. The ramp's state IS state::control.active_target — process data
+// zeroed on disarm and written directly by the position and torque modes — so a
+// helper holding its own copy would go stale across those transitions and a
+// re-arm would resume slewing from a setpoint nobody asked for.
+float velocityRamp(float current, float cmd, uint32_t scan_ms) {
+  if (CFG_VEL_ACCEL <= 0.0f) return cmd;
+  float step = CFG_VEL_ACCEL * (scan_ms * 0.001f);
+  return current + util::limit(-step, cmd - current, step);
+}
 
 // ---------------------------------------------------------------------------
-void PrgControl::init() {
-  auto& AX = gvl::AXIS;
+}  // namespace
+
+void init() {
+  auto& AX = state::axis;
   AX.armed         = false;
   AX.estop         = false;
   AX.control_mode  = CTRL_TORQUE;
@@ -43,7 +56,7 @@ void PrgControl::init() {
   // applied in applyPendingGains() (the CFG_* are in A/(rad/s), or in V in the
   // voltage fallback).
   {
-    float k = gvl::IN.isense_ok ? CFG_KT : 1.0f;
+    float k = state::at_boot.isense_ok ? CFG_KT : 1.0f;
     AX.vel_gain     = CFG_VEL_P * k;
     AX.vel_int_gain = CFG_VEL_I * k;
     AX.vel_d_gain   = CFG_VEL_D * k;
@@ -52,8 +65,9 @@ void PrgControl::init() {
 }
 
 // ---------------------------------------------------------------------------
-void PrgControl::applyPendingGains() {
-  auto& AX    = gvl::AXIS;
+namespace {
+void applyPendingGains() {
+  auto& AX    = state::axis;
   auto& motor = io::motor::motor;
 
   // --- Velocity PID gains (CAN Set_Vel_Gains, or serial KP/KI/KD) ---
@@ -61,7 +75,7 @@ void PrgControl::applyPendingGains() {
     AX.req_vel_gains = false;
     // The mirrors are in Nm/(rad/s); in foc_current the PID outputs amps, hence
     // the /Kt. In the voltage fallback the value is applied as-is (volts).
-    float k = gvl::IN.isense_ok ? (1.0f / CFG_KT) : 1.0f;
+    float k = state::at_boot.isense_ok ? (1.0f / CFG_KT) : 1.0f;
     motor.PID_velocity.P = AX.vel_gain     * k;
     motor.PID_velocity.I = AX.vel_int_gain * k;
     motor.PID_velocity.D = AX.vel_d_gain   * k;
@@ -95,21 +109,21 @@ void PrgControl::applyPendingGains() {
 }
 
 // ---------------------------------------------------------------------------
-bool PrgControl::runPendingSequence(bool safe) {
-  auto& AX = gvl::AXIS;
+bool runPendingSequence(bool safe) {
+  auto& AX = state::axis;
 
   // Always consume the flag, and always answer — see seq_motor_char.h.
   if (AX.req_characterise) {
     AX.req_characterise = false;
-    seq::motorCharacterise(safe);
+    calibration::characteriseMotor(safe);
     return true;
   }
 
 #if SENSOR_TYPE == SENSOR_TYPE_HALL
-  if (gvl::M.req_hall_cal && !gvl::M.foc_ready) {
-    gvl::M.req_hall_cal = false;
+  if (state::req.hall_cal && !state::control.foc_ready) {
+    state::req.hall_cal = false;
     if (safe && !AX.armed) {
-      seq::hallCalibrate();
+      calibration::hallCalibrate();
       io::motor::motor.disable();
     } else {
       Serial.println("[!] Hall cal exige moteur désarmé + état sain (envoyer 'I' puis 'H').");
@@ -122,8 +136,8 @@ bool PrgControl::runPendingSequence(bool safe) {
 }
 
 // ---------------------------------------------------------------------------
-void PrgControl::updateSetpoint() {
-  auto& AX    = gvl::AXIS;
+void updateSetpoint() {
+  auto& AX    = state::axis;
   auto& motor = io::motor::motor;
 
   switch (AX.control_mode) {
@@ -133,20 +147,20 @@ void PrgControl::updateSetpoint() {
       // and the integrator winds up without ever converging.
       float vmax = (motor.velocity_limit < CFG_VEL_CMD_MAX) ? motor.velocity_limit
                                                             : CFG_VEL_CMD_MAX;
-      float cmd = plc::LIMIT(-vmax, AX.input_vel, vmax);
-      gvl::Q.active_target = fb::velocityRamp(gvl::Q.active_target, cmd, SCAN_MS_COMMS);
+      float cmd = util::limit(-vmax, AX.input_vel, vmax);
+      state::control.active_target = velocityRamp(state::control.active_target, cmd, SCAN_MS_COMMS);
       break;
     }
     case CTRL_POSITION:
       motor.controller     = MotionControlType::angle;
-      gvl::Q.active_target = AX.input_pos;
+      state::control.active_target = AX.input_pos;
       break;
     case CTRL_TORQUE:
     case CTRL_VOLTAGE:
     default:
       motor.controller = MotionControlType::torque;
-      gvl::Q.active_target =
-          gvl::IN.isense_ok ? (AX.input_torque / CFG_KT) : AX.input_torque;
+      state::control.active_target =
+          state::at_boot.isense_ok ? (AX.input_torque / CFG_KT) : AX.input_torque;
       break;
   }
 
@@ -157,14 +171,16 @@ void PrgControl::updateSetpoint() {
   if (AX.pos_gain      > 0.0f) motor.P_angle.P = AX.pos_gain;
 
   if (CFG_WATCHDOG_MS > 0 && (millis() - AX.last_setpoint_ms) > CFG_WATCHDOG_MS) {
-    AX.axis_error |= ERR_WATCHDOG_EXPIRED;
+    AX.raiseError(ERR_WATCHDOG_EXPIRED);
     AX.armed = false;
   }
 }
 
 // ---------------------------------------------------------------------------
-void PrgControl::scan() {
-  auto& AX    = gvl::AXIS;
+}  // namespace
+
+void update() {
+  auto& AX    = state::axis;
   auto& motor = io::motor::motor;
 
   if (AX.req_reboot) {
@@ -174,56 +190,54 @@ void PrgControl::scan() {
     NVIC_SystemReset();
   }
 
-  if (AX.req_clear_errors) {
-    AX.req_clear_errors = false;
-    gvl::M.fault  = false;
-    AX.axis_error = 0;
-    Serial.println("[OK] Erreurs réinitialisées.");
-  }
+  // NOTE: req_clear_errors is consumed by app::safety, which owns the fault
+  // latch. Clearing it here would let this task erase a fault that safety
+  // latched microseconds ago and re-arm into a live over-voltage.
 
   applyPendingGains();
 
   // Global safety, simplified (PRG_SAFETY owns the hardware).
-  bool safe = !AX.estop && !gvl::M.fault;
+  bool safe = !AX.estop && !state::safety.fault;
 
   if (runPendingSequence(safe)) return;
 
   bool want = AX.armed && safe;
 
   // --- DISARM ---
-  if (!want && gvl::M.foc_ready) {
-    gvl::M.foc_ready     = false;
-    gvl::Q.active_target = 0.0f;
+  if (!want && state::control.foc_ready) {
+    state::control.foc_ready     = false;
+    state::control.active_target = 0.0f;
     motor.disable();
   }
 
   // --- ARM & CALIBRATE ---
-  if (want && !gvl::M.foc_ready) {
+  if (want && !state::control.foc_ready) {
     io::motor::enableStage();
-    if (!gvl::M.calibrated) {
+    if (!state::control.calibrated) {
       if (CFG_PRECALIBRATED) {
         motor.sensor_direction    = (CFG_SENSOR_DIRECTION >= 0) ? Direction::CW : Direction::CCW;
         motor.zero_electric_angle = CFG_ZERO_ELEC_ANGLE;
       }
       if (motor.initFOC()) {
-        gvl::M.calibrated = true;
+        state::control.calibrated = true;
         Serial.print("initFOC OK | CFG_SENSOR_DIRECTION=");
         Serial.print(motor.sensor_direction == Direction::CW ? 1 : -1);
         Serial.print("  CFG_ZERO_ELEC_ANGLE=");
         Serial.println(motor.zero_electric_angle, 4);
       } else {
         Serial.println("[-] initFOC FAILED -> disarm (voir logs MOT: ci-dessus)");
-        AX.axis_error |= ERR_ENCODER_FAILED;
+        AX.raiseError(ERR_ENCODER_FAILED);
         AX.armed = false;
         motor.disable();
         return;
       }
     }
-    gvl::M.foc_ready = true;
+    state::control.foc_ready = true;
   }
 
-  if (gvl::M.foc_ready) updateSetpoint();
-  else                  gvl::Q.active_target = 0.0f;
+  if (state::control.foc_ready) updateSetpoint();
+  else                  state::control.active_target = 0.0f;
 }
 
-} // namespace prog
+}  // namespace control
+}  // namespace app

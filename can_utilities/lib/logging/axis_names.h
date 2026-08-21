@@ -14,7 +14,7 @@
 #pragma once
 
 #include <Arduino.h>
-#include "gvl/axis_io.h"   // the enums, generated from the same table
+#include "axis_io.h"   // the enums, generated from the same table
 
 namespace axisnames {
 

@@ -3,8 +3,8 @@
 // ============================================================================
 #include "io/io_motor.h"
 #include "io/io_gate.h"
-#include "gvl/gvl.h"
-#include "config/plc_config.h"
+#include "state.h"
+#include "config/tasks_config.h"
 #include "current_sense/hardware_specific/stm32/stm32_mcu.h"  // Stm32CurrentSenseParams
 
 namespace io {
@@ -37,7 +37,7 @@ LowsideCurrentSense current_sense =
 
 // ---------------------------------------------------------------------------
 ADC_TypeDef* currentSenseAdc() {
-  if (!gvl::IN.isense_ok || !current_sense.params) return nullptr;
+  if (!state::at_boot.isense_ok || !current_sense.params) return nullptr;
   ADC_HandleTypeDef *h = ((Stm32CurrentSenseParams *)current_sense.params)->adc_handle;
   return h ? h->Instance : nullptr;
 }
@@ -84,8 +84,8 @@ void init() {
   // (CFG_PRECALIBRATED): an inverted polarity in foc_current is positive
   // feedback (runaway).
   current_sense.skip_align = (CFG_PRECALIBRATED != 0);
-  gvl::IN.isense_ok = (current_sense.init() == 1);
-  if (gvl::IN.isense_ok) {
+  state::at_boot.isense_ok = (current_sense.init() == 1);
+  if (state::at_boot.isense_ok) {
     motor.linkCurrentSense(&current_sense);
     // Closed current loop: the velocity PID now outputs amps and
     // motor.current_limit becomes effective (in voltage mode it was ignored).
@@ -129,7 +129,7 @@ void init() {
                                           //    is smoothed
   hybrid.vel_lo  = CFG_SENSORLESS_VEL_LO;
   hybrid.vel_hi  = CFG_SENSORLESS_VEL_HI;
-  hybrid.enabled = (CFG_SENSORLESS_ENABLE != 0) && gvl::IN.isense_ok;  // needs the current sense
+  hybrid.enabled = (CFG_SENSORLESS_ENABLE != 0) && state::at_boot.isense_ok;  // needs the current sense
   hybrid.initObserver();
 #endif
 

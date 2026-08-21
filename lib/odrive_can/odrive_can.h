@@ -7,7 +7,7 @@
 //
 //  This module is deliberately decoupled from SimpleFOC: it is a fieldbus I/O
 //  driver that only reads/writes the shared AxisIO block of the process image
-//  (include/gvl/axis_io.h). The control programs (src/prog/) bridge that block
+//  (include/axis_io.h). The control programs (src/prog/) bridge that block
 //  to the BLDCMotor; neither side knows about the other. Runs on
 //  pazi88/STM32_CAN (CAN1 on PB8/PB9).
 // ============================================================================
@@ -15,7 +15,7 @@
 #include <Arduino.h>
 #include <STM32_CAN.h>
 #include "can_ids.h"       // odcan::Cmd — shared with the can_utilities host tool
-#include "gvl/axis_io.h"   // AxisIO + the axis state/mode/error vocabulary
+#include "axis_io.h"   // AxisIO + the axis state/mode/error vocabulary
 
 namespace odcan {
 
@@ -24,7 +24,7 @@ namespace odcan {
 // dragging in STM32_CAN — see that file's header for the id/vocabulary split.
 
 // AxisState / ControlMode / AxisErrorBits and the AxisIO block itself now live
-// in include/gvl/axis_io.h — they are process data shared with the control
+// in include/axis_io.h — they are process data shared with the control
 // programs, not part of this wire protocol. Only the arbitration ids above are.
 
 // ---- The CAN interface -----------------------------------------------------

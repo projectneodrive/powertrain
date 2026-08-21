@@ -5,22 +5,23 @@
 //  twice, into the dispatch table and into the help banner. All a new command
 //  needs is a handler here and a line there.
 // ============================================================================
-#include "prog/prog_console.h"
+#include "app.h"
 #include "io/io_console.h"
 #include "io/io_can.h"
 #include "io/io_motor.h"
 #include "io/io_brake.h"
-#include "plc/plc_std_fb.h"
-#include "gvl/gvl.h"
+#include "util/timers.h"
+#include "state.h"
 #include "config/motor_config.h"
 #include <stdlib.h>
 #include <ctype.h>
 
 using namespace odcan;
 
-namespace prog {
+namespace app {
+namespace console {
 
-PrgConsole prgConsole;
+namespace { uint32_t s_beat = 0; }   // telemetry line counter
 
 namespace {
 
@@ -37,146 +38,146 @@ using Handler = void (*)(float);
 //  and what it landed on, instead of inferring it from the telemetry.
 // ---------------------------------------------------------------------------
 void cmdArm(float) {
-  bool old = gvl::AXIS.armed;
-  gvl::AXIS.estop = false;
-  gvl::AXIS.armed = true;
-  gvl::AXIS.last_setpoint_ms = millis();
-  io::console::ackInt("A", "armed", old, gvl::AXIS.armed);
+  bool old = state::axis.armed;
+  state::axis.estop = false;
+  state::axis.armed = true;
+  state::axis.last_setpoint_ms = millis();
+  io::console::ackInt("A", "armed", old, state::axis.armed);
 }
 
 void cmdIdle(float) {
-  bool old = gvl::AXIS.armed;
-  gvl::AXIS.armed = false;
-  io::console::ackInt("I", "armed", old, gvl::AXIS.armed);
+  bool old = state::axis.armed;
+  state::axis.armed = false;
+  io::console::ackInt("I", "armed", old, state::axis.armed);
 }
 
 void cmdVelocity(float v) {
-  float old = gvl::AXIS.input_vel;
-  gvl::AXIS.control_mode = CTRL_VELOCITY;
-  gvl::AXIS.input_vel    = v;
-  gvl::AXIS.last_setpoint_ms = millis();
+  float old = state::axis.input_vel;
+  state::axis.control_mode = CTRL_VELOCITY;
+  state::axis.input_vel    = v;
+  state::axis.last_setpoint_ms = millis();
   io::console::ackFloat("V", "vel", old, v, 2, "rad/s");
 }
 
 void cmdTorque(float v) {
-  float old = gvl::AXIS.input_torque;
-  gvl::AXIS.control_mode = CTRL_TORQUE;
-  gvl::AXIS.input_torque = v;
-  gvl::AXIS.last_setpoint_ms = millis();
+  float old = state::axis.input_torque;
+  state::axis.control_mode = CTRL_TORQUE;
+  state::axis.input_torque = v;
+  state::axis.last_setpoint_ms = millis();
   io::console::ackFloat("T", "torque", old, v, 2, "Nm");
 }
 
 void cmdPosition(float v) {
-  float old = gvl::AXIS.input_pos;
-  gvl::AXIS.control_mode = CTRL_POSITION;
-  gvl::AXIS.input_pos    = v;
-  gvl::AXIS.last_setpoint_ms = millis();
+  float old = state::axis.input_pos;
+  state::axis.control_mode = CTRL_POSITION;
+  state::axis.input_pos    = v;
+  state::axis.last_setpoint_ms = millis();
   io::console::ackFloat("X", "pos", old, v, 3, "rad");
 }
 
 void cmdCharacterise(float) {
-  gvl::AXIS.req_characterise = true;
+  state::axis.req_characterise = true;
   io::console::ackMsg("M", "characterise requested");
 }
 
 #if SENSOR_TYPE == SENSOR_TYPE_HALL
 void cmdHallCal(float) {
-  gvl::M.req_hall_cal = true;
+  state::req.hall_cal = true;
   io::console::ackMsg("H", "hall-angle calibration requested (moteur désarmé)");
 }
 #endif
 
 void cmdClearErrors(float) {
-  gvl::AXIS.req_clear_errors = true;
-  gvl::AXIS.estop = false;
+  state::axis.req_clear_errors = true;
+  state::axis.estop = false;
   io::console::ackMsg("C", "clear-errors requested");
 }
 
 // ---- Velocity PID (Nm/(rad/s)) ---------------------------------------------
 void cmdVelP(float v) {
-  float old = gvl::AXIS.vel_gain;     gvl::AXIS.vel_gain     = v;
+  float old = state::axis.vel_gain;     state::axis.vel_gain     = v;
   io::console::ackFloat("KP", "vel_gain", old, v, 4);
-  gvl::AXIS.req_vel_gains = true;
+  state::axis.req_vel_gains = true;
 }
 void cmdVelI(float v) {
-  float old = gvl::AXIS.vel_int_gain; gvl::AXIS.vel_int_gain = v;
+  float old = state::axis.vel_int_gain; state::axis.vel_int_gain = v;
   io::console::ackFloat("KI", "vel_int_gain", old, v, 4);
-  gvl::AXIS.req_vel_gains = true;
+  state::axis.req_vel_gains = true;
 }
 void cmdVelD(float v) {
-  float old = gvl::AXIS.vel_d_gain;   gvl::AXIS.vel_d_gain   = v;
+  float old = state::axis.vel_d_gain;   state::axis.vel_d_gain   = v;
   io::console::ackFloat("KD", "vel_d_gain", old, v, 5);
-  gvl::AXIS.req_vel_gains = true;
+  state::axis.req_vel_gains = true;
 }
 void cmdVelReapply(float) {
   io::console::ackMsg("K", "reapply vel gains");
-  gvl::AXIS.req_vel_gains = true;
+  state::axis.req_vel_gains = true;
 }
 
 // ---- Current PID (V/A) ------------------------------------------------------
 void cmdCurP(float v) {
-  float old = gvl::AXIS.cur_p_gain;   gvl::AXIS.cur_p_gain   = v;
+  float old = state::axis.cur_p_gain;   state::axis.cur_p_gain   = v;
   io::console::ackFloat("JP", "cur_p", old, v, 4);
-  gvl::AXIS.req_cur_gains = true;
+  state::axis.req_cur_gains = true;
 }
 void cmdCurI(float v) {
-  float old = gvl::AXIS.cur_int_gain; gvl::AXIS.cur_int_gain = v;
+  float old = state::axis.cur_int_gain; state::axis.cur_int_gain = v;
   io::console::ackFloat("JI", "cur_i", old, v, 4);
-  gvl::AXIS.req_cur_gains = true;
+  state::axis.req_cur_gains = true;
 }
 void cmdCurD(float v) {
-  float old = gvl::AXIS.cur_d_gain;   gvl::AXIS.cur_d_gain   = v;
+  float old = state::axis.cur_d_gain;   state::axis.cur_d_gain   = v;
   io::console::ackFloat("JD", "cur_d", old, v, 5);
-  gvl::AXIS.req_cur_gains = true;
+  state::axis.req_cur_gains = true;
 }
 void cmdCurReapply(float) {
   io::console::ackMsg("J", "reapply current gains");
-  gvl::AXIS.req_cur_gains = true;
+  state::axis.req_cur_gains = true;
 }
 
 // ---- Position PID -----------------------------------------------------------
 void cmdPosP(float v) {
-  float old = gvl::AXIS.pos_gain;
-  gvl::AXIS.pos_gain = (v > 0.0f) ? v : 0.0f;
-  io::console::ackFloat("PP", "pos_p", old, gvl::AXIS.pos_gain, 4);
-  gvl::AXIS.req_pos_gains = true;
+  float old = state::axis.pos_gain;
+  state::axis.pos_gain = (v > 0.0f) ? v : 0.0f;
+  io::console::ackFloat("PP", "pos_p", old, state::axis.pos_gain, 4);
+  state::axis.req_pos_gains = true;
 }
 void cmdPosI(float v) {
-  float old = gvl::AXIS.pos_int_gain; gvl::AXIS.pos_int_gain = v;
+  float old = state::axis.pos_int_gain; state::axis.pos_int_gain = v;
   io::console::ackFloat("PI", "pos_i", old, v, 4);
-  gvl::AXIS.req_pos_gains = true;
+  state::axis.req_pos_gains = true;
 }
 void cmdPosD(float v) {
-  float old = gvl::AXIS.pos_d_gain;   gvl::AXIS.pos_d_gain   = v;
+  float old = state::axis.pos_d_gain;   state::axis.pos_d_gain   = v;
   io::console::ackFloat("PD", "pos_d", old, v, 5);
-  gvl::AXIS.req_pos_gains = true;
+  state::axis.req_pos_gains = true;
 }
 void cmdPosReapply(float) {
   io::console::ackMsg("P", "reapply position gains");
-  gvl::AXIS.req_pos_gains = true;
+  state::axis.req_pos_gains = true;
 }
 
 // ---- Runtime limits ---------------------------------------------------------
 // Clamped to a hard ceiling so a remote client can never request a dangerous
 // value — see CFG_*_MAX in motor_config.h.
 void cmdLimitCurrent(float v) {
-  float old = gvl::AXIS.current_limit;
-  gvl::AXIS.current_limit = plc::LIMIT(0.0f, v, CFG_CURRENT_LIMIT_MAX);
-  io::console::ackFloat("LC", "current_limit", old, gvl::AXIS.current_limit, 2, "A");
+  float old = state::axis.current_limit;
+  state::axis.current_limit = util::limit(0.0f, v, CFG_CURRENT_LIMIT_MAX);
+  io::console::ackFloat("LC", "current_limit", old, state::axis.current_limit, 2, "A");
 }
 void cmdLimitVelocity(float v) {
-  float old = gvl::AXIS.vel_limit;
-  gvl::AXIS.vel_limit = plc::LIMIT(0.0f, v, CFG_VEL_LIMIT_MAX);
-  io::console::ackFloat("LV", "vel_limit", old, gvl::AXIS.vel_limit, 2, "rad/s");
+  float old = state::axis.vel_limit;
+  state::axis.vel_limit = util::limit(0.0f, v, CFG_VEL_LIMIT_MAX);
+  io::console::ackFloat("LV", "vel_limit", old, state::axis.vel_limit, 2, "rad/s");
 }
 void cmdLimitHelp(float) {
   Serial.println("AK L?: use LC<A> or LV<rad/s>");
 }
 
 void cmdPosGain(float v) {
-  float old = gvl::AXIS.pos_gain;
-  gvl::AXIS.pos_gain = (v > 0.0f) ? v : 0.0f;
-  io::console::ackFloat("G", "pos_gain", old, gvl::AXIS.pos_gain, 4);
+  float old = state::axis.pos_gain;
+  state::axis.pos_gain = (v > 0.0f) ? v : 0.0f;
+  io::console::ackFloat("G", "pos_gain", old, state::axis.pos_gain, 4);
 }
 
 // ---------------------------------------------------------------------------
@@ -192,9 +193,9 @@ void cmdDumpConfig(float) {
   Serial.print(" pos_gain=");         Serial.print(motor.P_angle.P, 4);
   Serial.print(" pos_i=");            Serial.print(motor.P_angle.I, 4);
   Serial.print(" pos_d=");            Serial.print(motor.P_angle.D, 5);
-  Serial.print(" vel_p=");            Serial.print(gvl::AXIS.vel_gain, 4);
-  Serial.print(" vel_i=");            Serial.print(gvl::AXIS.vel_int_gain, 4);
-  Serial.print(" vel_d=");            Serial.print(gvl::AXIS.vel_d_gain, 5);
+  Serial.print(" vel_p=");            Serial.print(state::axis.vel_gain, 4);
+  Serial.print(" vel_i=");            Serial.print(state::axis.vel_int_gain, 4);
+  Serial.print(" vel_d=");            Serial.print(state::axis.vel_d_gain, 5);
   Serial.print(" cur_p=");            Serial.print(motor.PID_current_q.P, 4);
   Serial.print(" cur_i=");            Serial.print(motor.PID_current_q.I, 4);
   Serial.print(" cur_d=");            Serial.print(motor.PID_current_q.D, 5);
@@ -269,20 +270,20 @@ void printGroup(uint8_t group, const char* prefix) {
 } // namespace
 
 // ---------------------------------------------------------------------------
-void printConsoleBanner() {
+void printBanner() {
   printGroup(GRP_CMDS,   "Serial cmds: ");
   printGroup(GRP_GAINS,  "  gains:     ");
   printGroup(GRP_CONFIG, "  config:    ");
 }
 
 // ---------------------------------------------------------------------------
-void PrgConsole::scan() {
+void update() {
   const char* line;
   while ((line = io::console::poll()) != nullptr) dispatch(line);
 
   Serial.print("t=");     Serial.print(millis());
-  Serial.print(" #");     Serial.print(_beat++);
-  Serial.print(" mode="); Serial.print(gvl::AXIS.control_mode);
+  Serial.print(" #");     Serial.print(s_beat++);
+  Serial.print(" mode="); Serial.print(state::axis.control_mode);
 
   // Telemetry channels, generated from the schema shared with the web GUI
   // (include/telemetry_schema.h). Add a channel THERE and it streams here and
@@ -300,14 +301,15 @@ void PrgConsole::scan() {
 #undef TELEMETRY_CHANNEL_HALL
 #undef TELEMETRY_CHANNEL
 
-  Serial.print(gvl::M.foc_ready ? " RUN" : (gvl::M.calibrated ? " idle" : " SAFE"));
-  Serial.print(gvl::M.fault ? " [FAULT]" : "");
-  if (gvl::AXIS.axis_error) {
-    Serial.print(" err=0x"); Serial.print(gvl::AXIS.axis_error, HEX);
+  Serial.print(state::control.foc_ready ? " RUN" : (state::control.calibrated ? " idle" : " SAFE"));
+  Serial.print(state::safety.fault ? " [FAULT]" : "");
+  if (state::axis.axis_error) {
+    Serial.print(" err=0x"); Serial.print(state::axis.axis_error, HEX);
   }
   Serial.print(" can_tx_ok=");   Serial.print(io::can::bus.txOkCount());
   Serial.print(" can_tx_fail="); Serial.print(io::can::bus.txFailCount());
   Serial.print(" can_rx=");      Serial.println(io::can::bus.rxCount());
 }
 
-} // namespace prog
+}  // namespace console
+}  // namespace app

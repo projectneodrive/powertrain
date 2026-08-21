@@ -11,7 +11,7 @@
 //
 // The `label` column is what makes this a table rather than three enums:
 //
-//   * gvl/axis_io.h generates the enums from the name/value columns;
+//   * axis_io.h generates the enums from the name/value columns;
 //   * can_utilities decodes a heartbeat into "IDLE -> CLOSED_LOOP" and an error
 //     word into "[MOTOR_FAILED|ENCODER_FAILED]" instead of printing raw hex;
 //   * the web GUI's CAN Devices page decodes the same two things for display.
@@ -22,7 +22,7 @@
 //
 // ERR_NONE is deliberately absent from the AXIS_ERROR list: it is the ABSENCE
 // of bits, not a bit, and a decoder walking the list would match it against
-// every value. gvl/axis_io.h defines it separately.
+// every value. axis_io.h defines it separately.
 
 // ---- States (ODrive fw-v0.5.6 values) --------------------------------------
 AXIS_STATE(AXIS_UNDEFINED,      0, "UNDEFINED")

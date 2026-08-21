@@ -34,11 +34,11 @@
 // NB: the demo generator (GUI .../demosource.cpp) synthesises fake values for
 // these same keys; if you add a channel, give it a demo value there too.
 
-TELEMETRY_CHANNEL(tgt,   "Target",        "#f97316", "",     2, gvl::Q.active_target)
-TELEMETRY_CHANNEL(Iq,    "Iq [A]",        "#22c55e", "iq",   2, gvl::AXIS.iq_measured)
-TELEMETRY_CHANNEL(vel,   "Vel [rad/s]",   "#3b82f6", "",     2, gvl::AXIS.vel_rev * TWO_PI)
-TELEMETRY_CHANNEL(pos,   "Pos [rad]",     "#a855f7", "",     2, gvl::AXIS.pos_rev * TWO_PI)
-TELEMETRY_CHANNEL(Vbus,  "Vbus [V]",      "#ef4444", "vbus", 1, gvl::AXIS.vbus)
+TELEMETRY_CHANNEL(tgt,   "Target",        "#f97316", "",     2, state::control.active_target)
+TELEMETRY_CHANNEL(Iq,    "Iq [A]",        "#22c55e", "iq",   2, state::axis.iq_measured)
+TELEMETRY_CHANNEL(vel,   "Vel [rad/s]",   "#3b82f6", "",     2, state::axis.vel_rev * TWO_PI)
+TELEMETRY_CHANNEL(pos,   "Pos [rad]",     "#a855f7", "",     2, state::axis.pos_rev * TWO_PI)
+TELEMETRY_CHANNEL(Vbus,  "Vbus [V]",      "#ef4444", "vbus", 1, state::axis.vbus)
 
 // --- Braking energy balance --------------------------------------------------
 // Irgn : current the MOTOR pushes back into the bus (ibus < 0 = generating).
@@ -53,9 +53,9 @@ TELEMETRY_CHANNEL(Vbus,  "Vbus [V]",      "#ef4444", "vbus", 1, gvl::AXIS.vbus)
 // on the AUX branch. It shows the COMMANDED current. If the AUX half-bridge is
 // not conducting, the curve rises anyway — Vbus is the one telling the truth.
 TELEMETRY_CHANNEL(Irgn,  "Regen [A]",     "#06b6d4", "",     2,
-                  (gvl::AXIS.ibus < 0.0f ? -gvl::AXIS.ibus : 0.0f))
+                  (state::axis.ibus < 0.0f ? -state::axis.ibus : 0.0f))
 TELEMETRY_CHANNEL(Ibrk,  "Brake [A]",     "#eab308", "",     2,
-                  (io::brake::duty() * gvl::AXIS.vbus / CFG_BRAKE_R))
+                  (io::brake::duty() * state::axis.vbus / CFG_BRAKE_R))
 
 // Sensorless observer fraction (hall build only): 0 = pure hall, 1 = sensorless.
 TELEMETRY_CHANNEL_HALL(blnd,  "blend",         "#ec4899", "", 2, io::motor::hybrid.blend)

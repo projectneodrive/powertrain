@@ -1,31 +1,20 @@
 // ============================================================================
-//  SimpleFOC + FreeRTOS + ODrive CANSimple  —  ODrive v3.6 (MKS clone) / F405
+//  main.cpp — the entry point, and nothing else.
 //
-//  The firmware is organised as an IEC 61131-3 style PLC. Where to look:
+//  Everything the firmware does lives in modules:
 //
-//    src/config/configuration.cpp   the CONFIGURATION: the task table and the
-//                                   hardware boot order. Start here.
-//    src/plc/                       the runtime: Program, Task, the scheduler
-//                                   binding, and the standard function blocks
-//    include/gvl/                   VAR_GLOBAL — the process image, and the
-//                                   single-writer rules that make it safe
-//    src/prog/                      the PROGRAMs: FOC, safety, control, comms,
-//                                   console
-//    src/fb/                        application FUNCTION_BLOCKs
-//    src/io/                        the only code that touches hardware
-//    src/seq/                       blocking commissioning sequences
-//    include/config/                pins, motor/power tuning, task timing
-//    include/console_commands.h     the serial command set (one line each)
-//    include/can_commands.h         the CANSimple command set (one line each)
-//    include/telemetry_schema.h     the streamed channels, shared with the GUI
+//    src/boot.cpp    hardware bring-up order, the four tasks, what each runs
+//    src/app/        the control modules: foc, safety, control, comms, console
+//    src/io/         the only code that touches a register, pin or peripheral
+//    src/state.h     the values modules share, and who is allowed to write them
+//    src/util/       small stateful helpers (debounce, hysteresis, clamp)
 //
-//  setup() therefore has nothing left to do but hand over to the configuration.
+//  Configuration is in include/config/. The command, telemetry and CAN tables
+//  are in include/ and are compiled by the host tooling too — see src/README.md.
 // ============================================================================
-#include <Arduino.h>
-#include "config/configuration.h"
+#include <Arduino.h>   // declares setup()/loop() with the linkage the core expects
+#include "boot.h"
 
-void setup() {
-  configuration::boot();   // does not return
-}
+void setup() { boot::run(); }   // does not return
 
 void loop() {}

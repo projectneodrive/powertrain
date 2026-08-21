@@ -21,7 +21,7 @@
 
 #include <Arduino.h>
 #include "bridge_config.h"
-#include "gvl/axis_io.h"   // firmware-shared: AxisState / ControlMode / error bits
+#include "axis_io.h"   // firmware-shared: AxisState / ControlMode / error bits
 
 namespace bridge {
 

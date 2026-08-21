@@ -22,7 +22,7 @@ void OdriveCAN::begin(uint8_t node_id, uint32_t baud, uint8_t irq_prio) {
   // by the library's constructor, so calling setIRQPriority() after begin()
   // (as this used to) left the CAN1 ISR at NVIC priority 0 -- ABOVE
   // configMAX_SYSCALL_INTERRUPT_PRIORITY (see NVIC_PRIO_RTOS_SAFE comment in
-  // config/plc_config.h), meaning it could preempt a FreeRTOS critical section
+  // config/tasks_config.h), meaning it could preempt a FreeRTOS critical section
   // mid-update inside the driver's own TX/RX ring buffers and corrupt them.
   // That fully explains "a few frames work, then everything wedges forever,
   // non-deterministically depending on boot timing".
@@ -63,7 +63,7 @@ void OdriveCAN::poll() {
 void OdriveCAN::rxEstop(const uint8_t*) {
   _io.estop = true;
   _io.armed = false;
-  _io.axis_error |= ERR_ESTOP_REQUESTED;
+  _io.raiseError(ERR_ESTOP_REQUESTED);
 }
 
 void OdriveCAN::rxSetAxisState(const uint8_t* b) {

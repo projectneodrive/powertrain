@@ -1,10 +1,11 @@
 // ============================================================================
-//  plc_config.h  —  IEC 61131-3 CONFIGURATION parameters: task rates, priorities
-//  and stack depths for the PLC runtime (src/plc/), plus the interrupt priority
-//  policy. Nothing about the motor or the board wiring lives here.
+//  tasks_config.h  —  the real-time design in 16 numbers: task rates,
+//  priorities, stack depths and the interrupt priority policy. Nothing about
+//  the motor or the board wiring lives here.
 //
-//  The TASKS[] table itself is in src/config/configuration.cpp; this file holds
-//  the numbers it is built from.
+//  The tasks themselves are written out in src/boot.cpp; this file holds the
+//  numbers they are built from, so retuning the schedule never means reading
+//  task code.
 // ============================================================================
 #pragma once
 

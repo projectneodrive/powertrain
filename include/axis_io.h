@@ -1,5 +1,5 @@
 // ============================================================================
-//  gvl/axis_io.h  —  The axis command/telemetry block: the part of the process
+//  axis_io.h  —  The axis command/telemetry block: the part of the process
 //  image that the CANSimple fieldbus driver (lib/odrive_can) is mapped onto.
 //
 //  It lives here, under the project's include/ dir, rather than inside
@@ -97,9 +97,32 @@ struct AxisIO {
   volatile float    ibus        = 0.0f;         // A
   volatile uint32_t axis_error  = 0;            // ORed AxisErrorBits
   volatile uint8_t  cur_state   = AXIS_IDLE;    // current AxisState
+
+  // Reserved, always 0. This firmware reports every condition through
+  // axis_error, for which axis_vocab.h defines names all three projects share.
+  // These exist so the ODrive Get_*_Error frames are well-formed and decode as
+  // "no further detail". Populating them needs a sub-error vocabulary in
+  // axis_vocab.h first, which is a three-repo table change, not a firmware one —
+  // inventing values here would put magic numbers in three places that disagree.
   volatile uint32_t motor_error = 0;
   volatile uint32_t encoder_error = 0;
   volatile uint32_t controller_error = 0;
+
+  // ---- axis_error accessors --------------------------------------------------
+  // NEVER write axis_error with |=. It is raised from tasks at different
+  // priorities (safety preempts comms freely) and, on the CAN station, from a
+  // different core. `|=` on a volatile is LDR/ORR/STR: a bit raised by the
+  // preempting side between the load and the store is silently lost — and the
+  // losing side is always the safety side.
+  void raiseError(uint32_t bits) volatile {
+    __atomic_fetch_or(&axis_error, bits, __ATOMIC_RELAXED);
+  }
+
+  // Clears only the bits the caller OBSERVED, so a fault raised after the
+  // caller's snapshot survives the clear.
+  void clearErrorBits(uint32_t mask) volatile {
+    __atomic_fetch_and(&axis_error, ~mask, __ATOMIC_RELAXED);
+  }
 };
 
 } // namespace odcan

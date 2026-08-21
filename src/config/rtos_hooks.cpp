@@ -22,7 +22,7 @@ extern "C" void vApplicationStackOverflowHook(TaskHandle_t /*xTask*/, char *pcTa
   io::gate::disable();
   Serial.print("\n[FATAL] Stack overflow in task \"");
   Serial.print(pcTaskName);
-  Serial.println("\" -- halting. Increase its STACK_* in config/plc_config.h.");
+  Serial.println("\" -- halting. Increase its STACK_* in config/tasks_config.h.");
   Serial.flush();
   for (;;) {}
 }

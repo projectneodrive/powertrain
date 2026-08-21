@@ -1,14 +1,15 @@
 // ============================================================================
 //  seq_hall_cal.cpp — see seq_hall_cal.h.
 // ============================================================================
-#include "seq/seq_hall_cal.h"
+#include "app.h"
 
 #if SENSOR_TYPE == SENSOR_TYPE_HALL
 
 #include "io/io_motor.h"
-#include "gvl/gvl.h"
+#include "state.h"
 
-namespace seq {
+namespace app {
+namespace calibration {
 
 bool hallCalibrate() {
   using io::motor::motor;
@@ -101,10 +102,44 @@ bool hallCalibrate() {
   sensor.offsets_active = true;
   // Force a re-initFOC on the next arm so zero_electric_angle is recomputed
   // with the offsets active.
-  gvl::M.calibrated = false;
+  state::control.calibrated = false;
   return true;
 }
 
-} // namespace seq
+// ---------------------------------------------------------------------------
+void characteriseMotor(bool safe) {
+  // characteriseMotor() takes over setPhaseVoltage, so it requires the motor
+  // DISARMED. Report every refusal: an 'M' sent while armed used to be ignored
+  // silently, with the request flag left set.
+  if (state::control.foc_ready || state::axis.armed) {
+    Serial.println("[!] M: désarmer d'abord (envoyer 'I'), puis 'M'.");
+    return;
+  }
+  if (!state::at_boot.isense_ok) {
+    Serial.println("[!] M: current-sense non initialisé (voir boot).");
+    return;
+  }
+  if (!safe) {
+    Serial.println("[!] M: faute active -> 'C' pour l'effacer d'abord.");
+    return;
+  }
+
+  Serial.println("Characterising motor (R/L)... (quelques secondes, moteur immobile)");
+  io::motor::enableStage();
+  int rc = io::motor::motor.characteriseMotor(CFG_CHAR_VOLTAGE);
+  io::motor::motor.disable();
+
+  if (rc == 0) {
+    Serial.print("  R = "); Serial.print(io::motor::motor.phase_resistance, 4);
+    Serial.print(" ohm   L = "); Serial.print(io::motor::motor.phase_inductance * 1e6f, 2);
+    Serial.println(" uH");
+  } else {
+    // 1=CS not init, 2=voltage<=0, 3=current too low (raise CFG_CHAR_VOLTAGE), 4=R<=0
+    Serial.print("[!] Characterise échec, code "); Serial.println(rc);
+  }
+}
+
+}  // namespace calibration
+}  // namespace app
 
 #endif // SENSOR_TYPE_HALL

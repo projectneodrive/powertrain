@@ -37,7 +37,7 @@ extern STM32HWEncoder      sensor;
 extern Sensor& foc_sensor;
 
 // Full bring-up: sensor, driver, current sense, motor parameters and PID
-// defaults. Prints the same boot lines as before. Publishes gvl::IN.isense_ok.
+// defaults. Prints the same boot lines as before. Publishes state::at_boot.isense_ok.
 void init();
 
 // Arm the power stage. The DRV8301 needs a settling delay before its SPI is
