@@ -5,8 +5,9 @@ A C++/Qt port of [`serial_plotter_fast.py`](../serial_plotter_fast.py), compiled
 **ODrive v3.6** board over **USB**.
 
 It parses the same `key=value` telemetry emitted by the firmware
-(`t= mode= tgt= Iq= vel= pos= Vbus=` — see [`src/main.cpp`](../../src/main.cpp)
-`SerialTask`), plots Target / Iq / Vel / Pos / Vbus on stacked live charts, shows
+(`t= mode= tgt= Iq= vel= pos= Vbus=` — generated from
+[`include/telemetry_schema.h`](../../include/telemetry_schema.h) and emitted by
+[`src/app/console.cpp`](../../src/app/console.cpp)), plots Target / Iq / Vel / Pos / Vbus on stacked live charts, shows
 the raw serial monitor, sends commands, and can export the log to CSV.
 
 ## Pages
@@ -38,8 +39,9 @@ Graph behaviour:
 
 ### Firmware serial protocol used by the pages
 
-The Config and PID pages rely on serial commands added to
-[`src/main.cpp`](../../src/main.cpp) `handleSerial()`:
+The Config and PID pages rely on serial commands declared in
+[`include/console_commands.h`](../../include/console_commands.h) and handled in
+[`src/app/console.cpp`](../../src/app/console.cpp):
 
 | Command | Meaning |
 |---------|---------|

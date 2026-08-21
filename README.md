@@ -15,8 +15,8 @@ application: e‑bike motor control (torque / velocity, with sensor or sensorles
   which parameters to find, how to measure `R`/`L` + sensor offset/direction, and
   how to save them so the board boots pre‑calibrated.
 - **[src/README.md](src/README.md)** — **working on the firmware itself**: how it
-  is organised (an IEC 61131‑3 style PLC), and how to add a program, a task, a
-  serial/CAN command or a telemetry channel. Continues into
+  is organised (six modules over four FreeRTOS tasks), and how to add a module, a
+  task, a serial/CAN command or a telemetry channel. Continues into
   **[docs/Architecture.md](docs/Architecture.md)** for the runtime internals,
   concurrency model, timing budget and how to change core components.
 - **[docs/GUI.md](docs/GUI.md)** — the browser‑based **live plotter / PID tuner /
@@ -31,7 +31,7 @@ The PlatformIO firmware project **is the repository root**.
 
 | Path | What it is |
 |------|-----------|
-| [`platformio.ini`](platformio.ini), [`src/`](src/), [`include/`](include/), [`lib/`](lib/) | **The firmware**, organised as an IEC 61131‑3 style PLC — tasks, programs, function blocks and an explicit process image. **Start with [`src/README.md`](src/README.md)**, then `src/config/configuration.cpp` (the task table + boot order). Configuration lives in `include/config/` (`hw_pinout.h` / `motor_config.h` / `plc_config.h`); `lib/odrive_can/` is the CANSimple fieldbus driver. |
+| [`platformio.ini`](platformio.ini), [`src/`](src/), [`include/`](include/), [`lib/`](lib/) | **The firmware** — six control modules in `src/app/` over four FreeRTOS tasks, a hardware layer in `src/io/`, and shared state grouped by writer in `src/state.h`. **Start with [`src/README.md`](src/README.md)**, then `src/boot.cpp` (the bring‑up order and the four tasks). Configuration lives in `include/config/` (`hw_pinout.h` / `motor_config.h` / `tasks_config.h`); `lib/odrive_can/` is the CANSimple fieldbus driver. |
 | [`GUI/`](GUI/) | Host‑side USB tooling: the Qt‑for‑WebAssembly **web GUI** (`serial_plotter_wasm/`, see [docs/GUI.md](docs/GUI.md)) and a Python desktop plotter (`serial_plotter_fast.py`). Both talk directly to the board's USB serial console. |
 | [`test/`](test/) | Standalone bench sketches (raw encoder read, open‑loop, closed‑loop) — **not** part of the main build. |
 | [`CAN/`](CAN/) | CAN tooling: the ODrive CANSimple **DBC generator** (`create_can_dbc.py`) plus bare‑minimum **Arduino MCP2515** and **ESP32 TWAI** one‑way sender *examples* (`arduino_can_sender/`, `esp32_twai_sender/`) — send‑only, no telemetry parsing. For an actual CAN control station, use `can_utilities` instead (see below). |

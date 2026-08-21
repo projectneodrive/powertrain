@@ -74,7 +74,10 @@ printing them as prose is what used to make the serial monitor unreadable.
 - **Header** — node id and link status at a glance, green/amber/red.
 - **Device** — axis state and control mode *decoded into words*, heartbeat age,
   and the heartbeat period / link timeout the station derived from the
-  firmware's own CAN table.
+  firmware's own CAN table. **Safety stop** shows whether the link-loss stop is
+  armed, disabled, or has *fired* — a disarmed axis and an axis nobody armed
+  look identical otherwise. Once it has fired, press **Arm (A)** when the link
+  is back.
 - **Bus** — the ESP32 TWAI controller's state and every error counter. Counters
   climbing while the state stays `RUNNING` is the missing-terminator signature,
   so those cells tint amber rather than leaving you to spot them in a column of
@@ -142,3 +145,11 @@ Same as any other control path: arming runs a one-time calibration that
 **twitches the motor**, so keep it free on first arm and keep the PSU
 current-limited. See the safety note in
 [Getting Started §1](Getting_Started.md#a-word-on-safety).
+
+Driving through the ESP32 control station adds one behaviour worth knowing
+about: if the heartbeat stops for a few seconds (`BRIDGE_LINK_LOSS_STOP_MS`,
+3 s by default) it **disarms the axis once**, so the motor coasts rather than
+running on with nobody watching it. It does not repeat — commands you type
+afterwards still reach the bus, which is the point when the bus is the thing
+that broke. The CAN Devices page's *Safety stop* row says whether it has fired.
+Details in [`can_utilities/README.md`](../can_utilities/README.md#safety).

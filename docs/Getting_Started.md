@@ -363,7 +363,8 @@ so odrivetool and existing ODrive CAN tools work unchanged.
   editor that drives the board over USB (no install; Chrome/Edge).
 - **[Calibration.md](Calibration.md)** — commissioning a new motor (find & save
   `R`/`L`, sensor offset/direction, pre‑calibrated boot).
-- Firmware source: [`src/main.cpp`](../src/main.cpp),
+- Firmware source: [`src/boot.cpp`](../src/boot.cpp) (bring‑up + tasks) and
+  [`src/app/`](../src/app/) (the control modules),
   [`include/config/`](../include/config/),
   [`lib/odrive_can/`](../lib/odrive_can/).
 - ODrive CANSimple reference:

@@ -22,9 +22,11 @@ commands, same `key=value` telemetry line, same `cfg ...` config line.
 - [Quick start](#quick-start)
 - [Directory map](#directory-map)
 - [Command reference](#command-reference)
+- [Safety](#safety)
 - [What CAN cannot reach](#what-can-cannot-reach)
 - [The telemetry line](#the-telemetry-line)
 - [Diagnostics](#diagnostics)
+  - [Why the link keeps dropping](#why-the-link-keeps-dropping)
 - [How to add something](#how-to-add-something)
 - [Things that look arbitrary but are not](#things-that-look-arbitrary-but-are-not)
 
@@ -156,8 +158,8 @@ Inside `lib/can_bridge/`:
 | [`bridge_telemetry.{h,cpp}`](lib/can_bridge/bridge_telemetry.h) | The two machine-readable lines: one accessor per schema channel for `t=…`, and the `can …` status line. |
 | [`can_bridge.{h,cpp}`](lib/can_bridge/can_bridge.h) | Assembly and the scan order. Read `poll()` first. |
 
-The scan order in `poll()` is the board's own PLC scan — **drain CAN, run the
-logic, publish** — so a command issued in a given pass acts on that pass's
+The scan order in `poll()` mirrors the board's own COMMS task — **drain CAN, run
+the logic, publish** — so a command issued in a given pass acts on that pass's
 readings.
 
 ---
@@ -206,6 +208,81 @@ independently so the compiler cannot catch it; `bridge_console.cpp` checks at
 boot and complains on the console instead.
 
 ---
+
+## Safety
+
+### The link-loss stop
+
+If the heartbeat stops for **`BRIDGE_LINK_LOSS_STOP_MS`** (3 s by default), the
+station **disarms the axis** — `Set_Axis_State(IDLE)`, so the motor coasts
+rather than actively braking. That is the same thing the firmware's own CAN
+watchdog does (`CFG_WATCHDOG_MS`), from the other end of the bus.
+
+Three details that are the design, not incidentals:
+
+- **It is much longer than the link-lost timeout** (500 ms). Losing the link is
+  worth *reporting* immediately; a dropped frame, a nudged connector or a board
+  reboot is not worth stopping a motor for.
+- **It fires once, on the edge — and never repeats.** Repeating it every scan
+  would overwrite whatever you type next, and when the bus is the broken thing,
+  the console is the only thing you have left. After the stop, commands keep
+  going out normally.
+- **It needs a falling edge.** With no board ever seen, nothing is stopped —
+  there is no link to lose, and nothing was armed.
+
+**It never counts time this station was not watching.** A scan takes
+microseconds; anything over `BRIDGE_SCAN_STALL_MS` means the loop was blocked
+(a serial write waiting on a host that stopped reading is the usual cause), and
+that time is credited back to the heartbeat clock and reported as
+`log W SYS loop stalled …`. Without it, a 3 s stall made the heartbeat age jump
+past the link-lost *and* safety-stop thresholds in a single scan, so the station
+declared a loss and disarmed the motor in the same breath — for a board that had
+never stopped transmitting. Disarming a motor because *we* stopped looking is
+the worst failure this thing can have.
+
+The credit is **capped at one `BRIDGE_LINK_LOSS_STOP_MS` per outage**, which is
+the other half of that argument: uncapped, a station stalling repeatedly would
+push the reference forward forever and never disarm at all, leaving a motor
+running with a genuinely dead master. Capped, the stop is at worst late by that
+much — the right way round to be wrong.
+
+A heartbeat coming back re-arms the one-shot, so a link that drops twice stops
+the motor twice. Press `A` to re-arm the axis once it is back. Set
+`BRIDGE_LINK_LOSS_STOP_MS` to `0` to disable it; a `static_assert` rejects a
+value shorter than the link-lost timeout, which would disarm the axis before
+the link was even declared down.
+
+The `can …` line carries `stop_after=` and `stopped=`, so the GUI's CAN Devices
+page shows whether the stop is armed, disabled, or has fired — a disarmed axis
+and an axis nobody armed otherwise look identical.
+
+### Potentiometer calibration at startup
+
+The pot's rest point is measured at boot, in
+[`Joystick::begin()`](lib/pot_input/pot_input.h). A spring-return pot is *at
+rest* when the board powers up, which is the one moment it can be measured
+without asking anybody to hold it there.
+
+It replaces a default derived from an ohm-meter reading (160–4.3 kΩ travel,
+3.3 kΩ at rest), which assumed the measured resistance span maps linearly onto
+the full ADC swing. It does not — and being wrong there means the joystick
+commands a velocity while the pot sits physically at rest.
+
+`POT_CAL_SAMPLES` readings are averaged, and the **spread** decides whether the
+average means anything:
+
+| Rejected because | What it usually is |
+|---|---|
+| spread > `POT_CAL_MAX_SPREAD` | a hand still on the pot at power-up — or **nothing connected to the pin**, since a floating ESP32 ADC wanders much further than this |
+| within `POT_CAL_RAIL_MARGIN` of either rail | full deflection at boot, or a broken wiper reading a supply rail |
+
+It retries `POT_CAL_ATTEMPTS` times, then falls back to the estimate and warns,
+naming which check failed. The joystick still works — its zero is just a guess
+until you hold the pot at rest and send `Z`, which re-runs the same measurement.
+
+The first `poll()` after a calibration never commands anything: the reference
+the pot is measured against just moved, and without re-seeding it the next
+sample reads as a large operator movement.
 
 ## What CAN cannot reach
 
@@ -281,10 +358,11 @@ The split that fixes it:
 ### The event log
 
 ```
-log <sev> <tag> <free text>
+log <ms> <sev> <tag> <free text>
 ```
 
-`<sev>` is `E`/`W`/`I`/`D`, `<tag>` one of `SYS CAN BUS LINK AXIS POT`. The GUI
+`<ms>` is the station uptime (same clock as the telemetry line's `t=`), `<sev>` is
+`E`/`W`/`I`/`D`, `<tag>` one of `SYS CAN BUS LINK AXIS POT`. The GUI
 parses this ([`src/logevent.h`](../GUI/serial_plotter_wasm/src/logevent.h)),
 colours by severity and lets you filter. Lines that do not match — the board's
 own banner, every `AK …` acknowledgement — are still shown, as Info.
@@ -308,7 +386,7 @@ What you actually see, at the default level:
 | Line | Means |
 |---|---|
 | `log I CAN node 3 seen on bus (target)` / `log W CAN node 3 … NOT the target (0)` | Node-id mismatch, in one line at the first frame, instead of "no telemetry" with no explanation |
-| `log I LINK established with node 0` / `log W LINK lost … (no heartbeat for 500ms)` | The timeout is `BRIDGE_HEARTBEAT_MISSES ×` the firmware's own broadcast period, read from its table — retune the heartbeat on the board and this follows |
+| `log I LINK established with node 0` / `log W LINK lost … drop #3; worst gap while up …` | The timeout is `BRIDGE_HEARTBEAT_MISSES ×` the firmware's own broadcast period, read from its table. **The message names the cause** — see [Why the link keeps dropping](#why-the-link-keeps-dropping) |
 | `log I AXIS state IDLE -> CLOSED_LOOP` | Decoded from the shared [`axis_vocab.h`](../include/axis_vocab.h) |
 | `log E AXIS error 0x0 -> 0x140 [MOTOR_FAILED\|ENCODER_FAILED]` | **A new error bit.** Decoded from the same table; a bit this build has no name for is shown as `+0xNNN` rather than dropped |
 | `log W BUS error counters climbing while state=RUNNING …` | **The important one.** Errors counted while the controller still reports RUNNING is the fingerprint of a marginal link — typically a missing terminator — that is dropping frames without going bus-off. Reported once, on the transition |
@@ -320,12 +398,42 @@ Command names in the trace are generated from the firmware's table, so an
 `UNKNOWN` there is informative: that frame is not part of *this board's* command
 set.
 
+### Why the link keeps dropping
+
+A link that drops repeatedly has three causes that need three different fixes,
+and the bus counters alone cannot tell them apart — two of them leave every
+counter clean. These are the fields that separate them, on the `can …` line and
+on the CAN Devices page:
+
+| What you see | Cause | Fix |
+|---|---|---|
+| `bus_ec` / `rx_ec` / `tx_ec` climbing | Frames being **corrupted** on the wire | Termination (120 Ω at *both* ends), CANH/CANL swap, common ground, bit-rate mismatch |
+| `scan_max` approaching `hb_period` | **This station's loop is not keeping up.** Not a bus fault at all | The frame trace at `D3` is the usual cause — 130 frames/s of tracing is more than 115200 baud carries. Drop to `D2`, or raise `BRIDGE_SERIAL_BAUD` |
+| `log W SYS loop stalled …` | The same thing, past `BRIDGE_SCAN_STALL_MS` | As above, or a serial host that stopped reading |
+| `log W AXIS state CLOSED_LOOP -> IDLE - NOT commanded here` | **The board disarmed itself.** Nothing on this end did it | Its own console: a fault, or `CFG_WATCHDOG_MS` if a CAN setpoint timeout is configured |
+| `rx_missed` / `rx_overrun` climbing | Frames arriving but **this end** is not draining fast enough | Same as above — the stall exceeded `BRIDGE_SCAN_STALL_MS` long enough to overflow the RX queue |
+| `hb_max` ≈ `hb_period`, then a drop | The link was **clean right up to the moment it stopped**: the sender died | Board reset, watchdog, bus physically cut, node powered down |
+| `hb_max` well above `hb_period` (say 300 ms against 100) | Frames were **already being lost** before the drop | Same list as the first row — but it also means `BRIDGE_HEARTBEAT_MISSES` is tighter than this bus deserves |
+
+`hb_max` is the worst gap actually observed **between two heartbeats while the
+link was up**. It can never reach `hb_timeout`, because exceeding that is what
+declares the loss — which is exactly what makes it diagnostic: a link sitting at
+the heartbeat period was healthy until it wasn't, and one sitting at 3–4× the
+period was limping the whole time. `drops` counts link losses since boot, so
+"very often" becomes a rate.
+
+The last row is the one worth acting on before reaching for a soldering iron:
+if `hb_max` is consistently high but well under the timeout, the link works and
+`BRIDGE_HEARTBEAT_MISSES` (default 5, so 500 ms) is simply too strict. Raising
+it to 8–10 costs nothing except a slower reaction to a genuine loss.
+
 ### The `can …` line
 
 One line a second, key/value, hex where an operator reads hex:
 
 ```
-can node=0 link=1 hb_age=8 hb_period=100 hb_timeout=500 bus=1 axis=8 mode=2
+can node=0 link=1 hb_age=8 hb_period=100 hb_timeout=500 hb_max=104 drops=0
+    scan_max=2 stop_after=3000 stopped=0 bus=1 axis=8 mode=2
     axis_err=0x0 motor_err=0x0 enc_err=0x0 ctrl_err=0x0
     tx_ok=124 tx_fail=0 rx=2451 tx_ec=0 rx_ec=0 tx_failed=0 rx_missed=0
     rx_overrun=0 arb_lost=0 bus_ec=0 baud=500000 nodes=0x…01 loglvl=2
@@ -392,6 +500,26 @@ board; the two are halves of one encoding and must change together.
   stamp on a live tuning session running over its USB console.
 - **`arm()` clears errors and zeroes the setpoint *before* closing the loop.**
   The other order arms onto whatever setpoint was left from the last session.
+- **One clock per scan, passed down, never re-read.** `poll()` samples `millis()`
+  once and threads it through the RX decoders. Reading the clock inside a
+  decoder instead cost a full debugging session: draining and tracing the queue
+  takes real milliseconds, so a heartbeat stamped with its own `millis()` landed
+  *after* the `now` the timeouts were checked against. `now - last_heartbeat_ms`
+  underflowed to ~4.29 billion, every timeout fired at once, and the station
+  disarmed the motor while heartbeats were streaming in at a perfect 100 ms.
+  `Axis::heartbeatAge()` now floors the subtraction at zero as well, because an
+  age is a duration and durations are not negative — but the real fix is the
+  single clock.
+- **The safety stop latches BEFORE it transmits.** The transmit is likely to
+  fail — the bus is the thing that just died — and retrying on failure would
+  reproduce the command flood the one-shot exists to prevent, at exactly the
+  moment somebody is trying to use the console.
+- **The safety stop disarms rather than commanding zero velocity.** Holding
+  0 rad/s keeps the axis armed and actively braking; `IDLE` lets it coast.
+- **Boot calibration checks the SPREAD, not the value.** Comparing against the
+  ohm-meter estimate would be checking a measurement against a guess. The spread
+  is self-contained: a pot held still reads within a few counts, one being moved
+  reads hundreds apart, and a disconnected pin reads wider than either.
 - **The joystick logs at DEBUG, not as an acknowledgement.** It moves
   continuously and its value is already on every telemetry line as `tgt`; at
   INFO it was ten lines a second restating what the plot was drawing.
@@ -408,7 +536,7 @@ board; the two are halves of one encoding and must change together.
 ## See also
 
 - [`../README.md`](../README.md) — the firmware repository
-- [`../src/README.md`](../src/README.md) — firmware architecture, and the tables this project consumes
+- [`../src/README.md`](../src/README.md) — firmware architecture (modules over four tasks), and the tables this project consumes
 - [`../docs/Getting_Started.md`](../docs/Getting_Started.md) — flashing and driving the board
 - [`../docs/GUI.md`](../docs/GUI.md) — the web plotter / PID tuner that talks to either port
 - [`../CAN/`](../CAN/) — the CANSimple DBC generator, and minimal send-only sketches
