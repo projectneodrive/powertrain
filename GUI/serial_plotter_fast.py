@@ -1,4 +1,11 @@
-"""Qt live plotter and serial command console for the powertrain firmware (v2, high-performance).
+"""Qt live plotter, PID tuner and serial console for the powertrain firmware (v2, high-performance).
+
+Desktop counterpart of the web GUI (GUI/serial_plotter_wasm), with matching
+features: one graph per telemetry channel with show/hide checkboxes, a setpoint
+control, velocity/current/position PID gain editors, and a live config read-back
+(serial Q). The plotted channels are parsed from the SAME single source of truth
+as the firmware and web GUI -- include/telemetry_schema.h -- so all three stay in
+lockstep automatically.
 
 Optimisations majeures par rapport à la version précédente :
 - pyqtgraph au lieu de matplotlib : rendu GPU-friendly, 10-50x plus rapide pour
@@ -23,12 +30,14 @@ from __future__ import annotations
 import argparse
 import csv
 import queue
+import re
 import sys
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -57,17 +66,57 @@ LOG_FLUSH_MS = 100          # flush des logs (moins critique que le tracé)
 STATUS_UPDATE_MS = 250      # le label de statut n'a pas besoin de 30 FPS
 MIN_PLOT_HEIGHT = 220       # hauteur plancher par graphe avant défilement
 
-# Canaux stockés dans le ring buffer (ordre fixe)
-CH_T, CH_TGT, CH_IQ, CH_VEL, CH_POS, CH_VBUS, CH_MODE = range(7)
-N_CHANNELS = 7
+# ---------------------------------------------------------------------------
+#  Telemetry channels — kept in lockstep with the firmware + web GUI by parsing
+#  the SAME single source of truth, include/telemetry_schema.h. Add a channel
+#  there and it shows up here (and on the board, and in the web GUI) with no edit
+#  to this file. The hardcoded list below is only a fallback for when the header
+#  can't be found (e.g. this script copied somewhere on its own).
+# ---------------------------------------------------------------------------
+# (key, label, colour, altkey)
+Channel = Tuple[str, str, str, str]
 
-PLOT_DEFS = [
-    ("Target", "#f97316", CH_TGT),
-    ("Iq [A]", "#22c55e", CH_IQ),
-    ("Vel [rad/s]", "#3b82f6", CH_VEL),
-    ("Pos [rad]", "#a855f7", CH_POS),
-    ("Vbus [V]", "#ef4444", CH_VBUS),
+_FALLBACK_CHANNELS: List[Channel] = [
+    ("tgt", "Target", "#f97316", ""),
+    ("Iq", "Iq [A]", "#22c55e", "iq"),
+    ("vel", "Vel [rad/s]", "#3b82f6", ""),
+    ("pos", "Pos [rad]", "#a855f7", ""),
+    ("Vbus", "Vbus [V]", "#ef4444", "vbus"),
+    ("Irgn", "Regen [A]", "#06b6d4", ""),
+    ("Ibrk", "Brake [A]", "#eab308", ""),
+    ("blnd", "blend", "#ec4899", ""),
 ]
+
+# TELEMETRY_CHANNEL(key, "label", "colour", "altkey", prec, expr) — and its
+# _HALL variant. key + the first three strings are all on the macro's first
+# line (only the value expression wraps), so a single regex catches every entry.
+_CHANNEL_RE = re.compile(
+    r'TELEMETRY_CHANNEL(?:_HALL)?\(\s*(\w+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"'
+)
+
+
+def _load_channels() -> List[Channel]:
+    schema = Path(__file__).resolve().parent.parent / "include" / "telemetry_schema.h"
+    try:
+        text = schema.read_text(encoding="utf-8")
+    except OSError:
+        return list(_FALLBACK_CHANNELS)
+    found = [(m.group(1), m.group(2), m.group(3), m.group(4))
+             for m in _CHANNEL_RE.finditer(text)]
+    return found or list(_FALLBACK_CHANNELS)
+
+
+CHANNELS: List[Channel] = _load_channels()
+N_DATA = len(CHANNELS)
+
+# Ring buffer layout: [t, <one column per channel>, mode].
+CH_T = 0
+CH_MODE = 1 + N_DATA
+N_CHANNELS = 2 + N_DATA
+
+# (label, colour, buffer-column) for the stacked plots, one per channel.
+PLOT_DEFS = [(label, color, 1 + i)
+             for i, (_key, label, color, _alt) in enumerate(CHANNELS)]
 
 
 @dataclass
@@ -306,7 +355,7 @@ class PlotWindow(QtWidgets.QMainWindow):
         plot_widget = self._create_plot_widget(title)
 
         # Les deux moitiés défilent indépendamment : la colonne de contrôles est
-        # plus haute qu'une fenêtre courte, et les 5 graphes empilés doivent
+        # plus haute qu'une fenêtre courte, et les graphes empilés doivent
         # garder une hauteur lisible au lieu d'être écrasés.
         self.left_scroll = QtWidgets.QScrollArea()
         self.left_scroll.setWidgetResizable(True)
@@ -320,7 +369,7 @@ class PlotWindow(QtWidgets.QMainWindow):
             QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         # Plancher de hauteur : en dessous, on défile au lieu de rétrécir.
-        # Volontairement plus haut que la plupart des écrans avec 5 graphes,
+        # Volontairement plus haut que la plupart des écrans avec tous les graphes,
         # pour que chaque courbe reste lisible.
         plot_widget.setMinimumHeight(MIN_PLOT_HEIGHT * len(PLOT_DEFS))
         self.plot_scroll.setWidget(plot_widget)
@@ -365,6 +414,25 @@ class PlotWindow(QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ UI --
 
+    def _make_gain_group(self, title: str, apply_slot):
+        """A KP/KI/KD group + Apply button, reused for each control loop."""
+        group = QtWidgets.QGroupBox(title)
+        grid = QtWidgets.QGridLayout(group)
+        spins = []
+        for row, (name, decimals, step) in enumerate(
+                (("KP", 4, 0.01), ("KI", 4, 0.01), ("KD", 5, 0.001))):
+            spin = QtWidgets.QDoubleSpinBox()
+            spin.setRange(0.0, 1000.0)
+            spin.setDecimals(decimals)
+            spin.setSingleStep(step)
+            grid.addWidget(QtWidgets.QLabel(name), row, 0)
+            grid.addWidget(spin, row, 1)
+            spins.append(spin)
+        apply_button = QtWidgets.QPushButton("Apply")
+        apply_button.clicked.connect(apply_slot)
+        grid.addWidget(apply_button, 3, 0, 1, 2)
+        return group, spins[0], spins[1], spins[2]
+
     def _create_left_panel(self) -> QtWidgets.QWidget:
         left_panel = QtWidgets.QWidget()
         left_layout = QtWidgets.QVBoxLayout(left_panel)
@@ -404,13 +472,70 @@ class PlotWindow(QtWidgets.QMainWindow):
         control_layout.addWidget(self.clear_button, 2, 0, 1, 2)
         control_layout.addWidget(self.save_log_button, 3, 0, 1, 2)
 
+        # Show/hide each graph, one checkbox per telemetry channel (from schema).
+        channels_group = QtWidgets.QGroupBox("Visible graphs")
+        channels_layout = QtWidgets.QVBoxLayout(channels_group)
+        channels_layout.setSpacing(2)
+        self.channel_checks: List[QtWidgets.QCheckBox] = []
+        for index, (label, color, _ch) in enumerate(PLOT_DEFS):
+            check = QtWidgets.QCheckBox(label)
+            check.setChecked(True)
+            check.setStyleSheet(f"QCheckBox {{ color: {color}; font-weight: bold; }}")
+            check.toggled.connect(
+                lambda checked, i=index: self.on_channel_toggled(i, checked))
+            self.channel_checks.append(check)
+            channels_layout.addWidget(check)
+
+        # Closed-loop setpoint: pick a mode and push a target (like the web tuner).
+        setpoint_group = QtWidgets.QGroupBox("Setpoint")
+        setpoint_layout = QtWidgets.QGridLayout(setpoint_group)
+        self.mode_combo = QtWidgets.QComboBox()
+        self.mode_combo.addItems(["Velocity [rad/s]", "Torque [Nm]", "Position [rad]"])
+        self.setpoint_spin = QtWidgets.QDoubleSpinBox()
+        self.setpoint_spin.setRange(-1000.0, 1000.0)
+        self.setpoint_spin.setDecimals(3)
+        self.setpoint_spin.setSingleStep(0.5)
+        apply_setpoint_button = QtWidgets.QPushButton("Apply setpoint")
+        stop_setpoint_button = QtWidgets.QPushButton("Stop (0)")
+        apply_setpoint_button.clicked.connect(self.apply_setpoint)
+        stop_setpoint_button.clicked.connect(self.stop_setpoint)
+        setpoint_layout.addWidget(QtWidgets.QLabel("Mode"), 0, 0)
+        setpoint_layout.addWidget(self.mode_combo, 0, 1)
+        setpoint_layout.addWidget(QtWidgets.QLabel("Target"), 1, 0)
+        setpoint_layout.addWidget(self.setpoint_spin, 1, 1)
+        setpoint_layout.addWidget(apply_setpoint_button, 2, 0)
+        setpoint_layout.addWidget(stop_setpoint_button, 2, 1)
+
+        # One PID group per control loop -> KP/KI/KD serial commands.
+        vel_group, self.vel_kp, self.vel_ki, self.vel_kd = self._make_gain_group(
+            "Velocity PID gains", self.apply_velocity_gains)
+        cur_group, self.cur_kp, self.cur_ki, self.cur_kd = self._make_gain_group(
+            "Current PID gains", self.apply_current_gains)
+        pos_group, self.pos_kp, self.pos_ki, self.pos_kd = self._make_gain_group(
+            "Position PID gains", self.apply_position_gains)
+
+        # Read-back of the live config (Q): fills the gain boxes and a summary.
+        config_group = QtWidgets.QGroupBox("Current configuration")
+        config_layout = QtWidgets.QVBoxLayout(config_group)
+        self.read_config_button = QtWidgets.QPushButton("Read from board (Q)")
+        self.read_config_button.clicked.connect(lambda: self.send_command("Q"))
+        self.config_summary = QtWidgets.QLabel(
+            "Press “Read from board (Q)” to load the live values.")
+        self.config_summary.setWordWrap(True)
+        self.config_summary.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.config_summary.setStyleSheet("color: #555; font-size: 11px;")
+        config_layout.addWidget(self.read_config_button)
+        config_layout.addWidget(self.config_summary)
+
         command_group = QtWidgets.QGroupBox("Serial Commands")
         command_layout = QtWidgets.QVBoxLayout(command_group)
         self.command_edit = QtWidgets.QLineEdit()
-        self.command_edit.setPlaceholderText("Type a command, for example: A, I, M, C, T1.5, V10")
+        self.command_edit.setPlaceholderText(
+            "Type a command, for example: A, I, C, T1.5, V10, KP0.1, X0.1, Q")
         self.send_button = QtWidgets.QPushButton("Send")
         quick_row = QtWidgets.QHBoxLayout()
-        for label in ("A (init)", "I (stop)", "M (measure)", "C (reset)"):
+        for label in ("A (arm)", "I (idle)", "M (measure)", "C (clear)"):
             button = QtWidgets.QPushButton(label)
             button.clicked.connect(lambda checked=False, cmd=label.split()[0]: self.send_command(cmd))
             quick_row.addWidget(button)
@@ -439,6 +564,12 @@ class PlotWindow(QtWidgets.QMainWindow):
 
         left_layout.addWidget(connection_group)
         left_layout.addWidget(control_group)
+        left_layout.addWidget(channels_group)
+        left_layout.addWidget(setpoint_group)
+        left_layout.addWidget(vel_group)
+        left_layout.addWidget(cur_group)
+        left_layout.addWidget(pos_group)
+        left_layout.addWidget(config_group)
         left_layout.addWidget(command_group)
         left_layout.addWidget(plot_info_group)
         left_layout.addWidget(logs_group)
@@ -450,12 +581,15 @@ class PlotWindow(QtWidgets.QMainWindow):
         pg.setConfigOptions(antialias=False, background="w", foreground="k")
 
         self.glw = ScrollableGraphicsLayoutWidget()
-        self.glw.addLabel(title, row=0, col=0)
+        self.plot_title = pg.LabelItem(title)
+        self._channel_visible = [True] * len(PLOT_DEFS)
 
+        # Build every plot up front; _rebuild_plot_layout decides which ones are
+        # actually placed (and in what order) so hiding a graph reflows the rest.
         self.plots: List[pg.PlotItem] = []
         self.curves: List[pg.PlotDataItem] = []
-        for row, (label, color, _channel) in enumerate(PLOT_DEFS, start=1):
-            plot = self.glw.addPlot(row=row, col=0)
+        for label, color, _channel in PLOT_DEFS:
+            plot = pg.PlotItem()
             plot.showGrid(x=True, y=True, alpha=0.25)
             plot.setLabel("left", label)
             plot.setMenuEnabled(False)
@@ -468,16 +602,46 @@ class PlotWindow(QtWidgets.QMainWindow):
             plot.enableAutoRange(axis="y")
             plot.setMouseEnabled(x=False, y=False)
             curve = plot.plot(pen=pg.mkPen(color, width=1.5))
-            if row > 1:
-                plot.setXLink(self.plots[0])
-            if row < len(PLOT_DEFS):
-                plot.getAxis("bottom").setStyle(showValues=False)
             self.plots.append(plot)
             self.curves.append(curve)
 
-        self.plots[-1].setLabel("bottom", "Time [s]")
-        self.plots[0].setXRange(0, self.window_s, padding=0)
+        self._rebuild_plot_layout()
         return self.glw
+
+    def _rebuild_plot_layout(self) -> None:
+        """(Re)place only the visible plots, top to bottom, and re-link axes."""
+        layout = self.glw.ci
+        layout.clear()
+        layout.addItem(self.plot_title, row=0, col=0)
+
+        visible = [i for i, on in enumerate(self._channel_visible) if on]
+        first_plot: Optional[pg.PlotItem] = None
+        for row, index in enumerate(visible, start=1):
+            plot = self.plots[index]
+            layout.addItem(plot, row=row, col=0)
+            if first_plot is None:
+                first_plot = plot
+                plot.setXLink(None)
+            else:
+                plot.setXLink(first_plot)
+            # Time axis + label only on the bottom-most visible plot.
+            is_last = row == len(visible)
+            plot.getAxis("bottom").setStyle(showValues=is_last)
+            plot.setLabel("bottom", "Time [s]" if is_last else "")
+
+        self.glw.setMinimumHeight(MIN_PLOT_HEIGHT * max(1, len(visible)))
+        if first_plot is not None:
+            first_plot.setXRange(0, self.window_s, padding=0)
+
+    def _first_visible_plot(self) -> Optional[pg.PlotItem]:
+        for index, on in enumerate(self._channel_visible):
+            if on:
+                return self.plots[index]
+        return None
+
+    def on_channel_toggled(self, index: int, checked: bool) -> None:
+        self._channel_visible[index] = checked
+        self._rebuild_plot_layout()
 
     def _connect_signals(self) -> None:
         self.refresh_button.clicked.connect(self.refresh_ports)
@@ -567,7 +731,7 @@ class PlotWindow(QtWidgets.QMainWindow):
         if not path.lower().endswith(".csv"):
             path += ".csv"
 
-        fieldnames = ["timestamp_s", "raw_line", "t", "mode", "tgt", "Iq", "vel", "pos", "Vbus"]
+        fieldnames = ["timestamp_s", "raw_line", "t", "mode"] + [key for key, _l, _c, _a in CHANNELS]
         with open(path, "w", newline="", encoding="utf-8") as file_handle:
             writer = csv.DictWriter(file_handle, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
@@ -587,7 +751,9 @@ class PlotWindow(QtWidgets.QMainWindow):
         empty = np.empty(0)
         for curve in self.curves:
             curve.setData(empty, empty)
-        self.plots[0].setXRange(0, self.window_s, padding=0)
+        first = self._first_visible_plot()
+        if first is not None:
+            first.setXRange(0, self.window_s, padding=0)
         self.update_status("Cleared graphs and serial monitor")
 
     def set_connection_controls(self, connected: bool) -> None:
@@ -667,6 +833,58 @@ class PlotWindow(QtWidgets.QMainWindow):
         self.send_command(self.command_edit.text())
         self.command_edit.clear()
 
+    # --------------------------------------------------------- tuner actions --
+
+    def _setpoint_prefix(self) -> str:
+        # Velocity -> V, Torque -> T, Position -> X (matches handleSerial()).
+        return {0: "V", 1: "T", 2: "X"}[self.mode_combo.currentIndex()]
+
+    def apply_setpoint(self) -> None:
+        self.send_command(f"{self._setpoint_prefix()}{self.setpoint_spin.value():.3f}")
+
+    def stop_setpoint(self) -> None:
+        self.setpoint_spin.setValue(0.0)
+        self.send_command(f"{self._setpoint_prefix()}0")
+
+    def apply_velocity_gains(self) -> None:
+        self.send_command(f"KP{self.vel_kp.value():.4f}")
+        self.send_command(f"KI{self.vel_ki.value():.4f}")
+        self.send_command(f"KD{self.vel_kd.value():.5f}")
+
+    def apply_current_gains(self) -> None:
+        self.send_command(f"JP{self.cur_kp.value():.4f}")
+        self.send_command(f"JI{self.cur_ki.value():.4f}")
+        self.send_command(f"JD{self.cur_kd.value():.5f}")
+
+    def apply_position_gains(self) -> None:
+        self.send_command(f"PP{self.pos_kp.value():.4f}")
+        self.send_command(f"PI{self.pos_ki.value():.4f}")
+        self.send_command(f"PD{self.pos_kd.value():.5f}")
+
+    def _apply_config(self, fields: Dict[str, float]) -> None:
+        """Populate the gain boxes + summary from a 'cfg ...' line (serial Q)."""
+        mapping = [
+            (self.vel_kp, "vel_p"), (self.vel_ki, "vel_i"), (self.vel_kd, "vel_d"),
+            (self.cur_kp, "cur_p"), (self.cur_ki, "cur_i"), (self.cur_kd, "cur_d"),
+            (self.pos_kp, "pos_gain"), (self.pos_ki, "pos_i"), (self.pos_kd, "pos_d"),
+        ]
+        for spin, key in mapping:
+            if key in fields:
+                spin.blockSignals(True)
+                spin.setValue(fields[key])
+                spin.blockSignals(False)
+
+        def g(key: str, dec: int) -> str:
+            return f"{fields[key]:.{dec}f}" if key in fields else "--"
+
+        self.config_summary.setText(
+            f"Limits:  current {g('current_limit', 2)} A   velocity {g('vel_limit', 2)} rad/s\n"
+            f"Velocity PID:  P {g('vel_p', 4)}  I {g('vel_i', 4)}  D {g('vel_d', 5)}\n"
+            f"Current PID:   P {g('cur_p', 4)}  I {g('cur_i', 4)}  D {g('cur_d', 5)}\n"
+            f"Position PID:  P {g('pos_gain', 4)}  I {g('pos_i', 4)}  D {g('pos_d', 5)}"
+        )
+        self.update_status("Config loaded from board")
+
     def on_window_changed(self, value: float) -> None:
         self.window_s = float(value)
 
@@ -700,6 +918,10 @@ class PlotWindow(QtWidgets.QMainWindow):
             fields = item.fields
             if fields is None:
                 continue
+            # Config dump ("cfg ...") -> tuner read-back, not a plot sample.
+            if item.raw_line.startswith("cfg"):
+                self._apply_config(fields)
+                continue
             t_ms = fields.get("t")
             if t_ms is None:
                 continue
@@ -708,11 +930,11 @@ class PlotWindow(QtWidgets.QMainWindow):
                 self.t0 = t_ms / 1000.0
 
             scratch[CH_T] = (t_ms / 1000.0) - self.t0
-            scratch[CH_TGT] = fields.get("tgt", 0.0)
-            scratch[CH_IQ] = fields.get("Iq", fields.get("iq", 0.0))
-            scratch[CH_VEL] = fields.get("vel", 0.0)
-            scratch[CH_POS] = fields.get("pos", 0.0)
-            scratch[CH_VBUS] = fields.get("Vbus", fields.get("vbus", 0.0))
+            for i, (key, _label, _color, alt) in enumerate(CHANNELS):
+                value = fields.get(key)
+                if value is None and alt:
+                    value = fields.get(alt)
+                scratch[1 + i] = value if value is not None else 0.0
             scratch[CH_MODE] = fields.get("mode", float("nan"))
             self.buffer.append(scratch)
             new_data = True
@@ -732,8 +954,11 @@ class PlotWindow(QtWidgets.QMainWindow):
         for curve, (_label, _color, channel) in zip(self.curves, PLOT_DEFS):
             curve.setData(x_win, view[channel, i0:])
 
-        # Axe X qui défile ; les axes Y sont gérés par l'auto-range pyqtgraph
-        self.plots[0].setXRange(max(0.0, t_start), max(self.window_s, t_last), padding=0)
+        # Axe X qui défile ; les axes Y sont gérés par l'auto-range pyqtgraph.
+        # (Il suffit de piloter le premier graphe visible : les autres y sont liés.)
+        first = self._first_visible_plot()
+        if first is not None:
+            first.setXRange(max(0.0, t_start), max(self.window_s, t_last), padding=0)
 
         now = time.monotonic()
         if now - self._last_status > STATUS_UPDATE_MS / 1000.0 and self.current_port:

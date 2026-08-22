@@ -7,7 +7,9 @@ serial commands documented in [Getting Started §5](Getting_Started.md#5-first-r
 
 Source and build instructions: [`GUI/serial_plotter_wasm/`](../GUI/serial_plotter_wasm/README.md).
 (There is also a Python desktop version, [`GUI/serial_plotter_fast.py`](../GUI/serial_plotter_fast.py),
-if you prefer not to use a browser.)
+with the same features — graphs + checkboxes, PID tuner, config read-back — if
+you prefer a native window over a browser. Run it with
+`python GUI/serial_plotter_fast.py`; it needs `pip install pyserial PySide6 pyqtgraph numpy`.)
 
 ## Opening it
 
