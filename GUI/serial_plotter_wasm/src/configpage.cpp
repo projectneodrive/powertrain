@@ -23,23 +23,6 @@ enum Column { ColParam = 0, ColValue = 1, ColUnit = 2, ColCount = 3 };
 
 ConfigPage::ConfigPage(QWidget *parent) : QWidget(parent)
 {
-    // key                label                 unit        cmd    decimals
-    m_params = {
-        {"current_limit", "Current limit",     "A",        "LC",  2},
-        {"vel_limit",     "Velocity limit",    "rad/s",    "LV",  2},
-        {"pos_gain",      "Position P gain",   "(rad/s)/rad", "G", 4},
-        {"vel_p",         "Velocity P",        "Nm/(rad/s)", "KP", 4},
-        {"vel_i",         "Velocity I",        "Nm/(rad)",   "KI", 4},
-        {"vel_d",         "Velocity D",        "Nm·s/(rad/s)", "KD", 5},
-        {"pole_pairs",    "Pole pairs",        "",         nullptr, 0},
-        {"kv",            "Motor KV",          "rpm/V",    nullptr, 2},
-        {"kt",            "Torque constant Kt", "Nm/A",    nullptr, 4},
-        {"phase_r",       "Phase resistance",  "ohm",      nullptr, 4},
-        {"phase_l",       "Phase inductance",  "µH",       nullptr, 2},
-        {"vbus_nom",      "Vbus nominal",      "V",        nullptr, 1},
-        {"volt_limit",    "Voltage limit",     "V",        nullptr, 1},
-    };
-
     auto *layout = new QVBoxLayout(this);
 
     auto *intro = new QLabel(QStringLiteral(
@@ -57,7 +40,7 @@ ConfigPage::ConfigPage(QWidget *parent) : QWidget(parent)
     buttonRow->addStretch(1);
     layout->addLayout(buttonRow);
 
-    m_table = new QTableWidget(m_params.size(), ColCount, this);
+    m_table = new QTableWidget(kNumConfigParams, ColCount, this);
     m_table->setHorizontalHeaderLabels({QStringLiteral("Parameter"),
                                         QStringLiteral("Value"),
                                         QStringLiteral("Unit")});
@@ -67,8 +50,8 @@ ConfigPage::ConfigPage(QWidget *parent) : QWidget(parent)
     m_table->horizontalHeader()->setSectionResizeMode(ColUnit, QHeaderView::ResizeToContents);
     m_table->setSelectionMode(QAbstractItemView::NoSelection);
 
-    for (int r = 0; r < m_params.size(); ++r) {
-        const ParamDef &p = m_params.at(r);
+    for (int r = 0; r < kNumConfigParams; ++r) {
+        const ParamDef &p = kConfigParams[r];
         auto *nameItem = new QTableWidgetItem(QString::fromUtf8(p.label));
         nameItem->setFlags(Qt::ItemIsEnabled);
         m_table->setItem(r, ColParam, nameItem);
@@ -110,8 +93,8 @@ void ConfigPage::onConfigReceived(const QHash<QString, double> &fields)
 {
     m_lastRead = fields;
     int filled = 0;
-    for (int r = 0; r < m_params.size(); ++r) {
-        const ParamDef &p = m_params.at(r);
+    for (int r = 0; r < kNumConfigParams; ++r) {
+        const ParamDef &p = kConfigParams[r];
         const QString key = QString::fromLatin1(p.key);
         auto *item = m_table->item(r, ColValue);
         if (fields.contains(key)) {
@@ -120,7 +103,7 @@ void ConfigPage::onConfigReceived(const QHash<QString, double> &fields)
         }
     }
     setStatus(QStringLiteral("Config read — %1 of %2 fields populated.")
-                  .arg(filled).arg(m_params.size()));
+                  .arg(filled).arg(kNumConfigParams));
 }
 
 void ConfigPage::onApplyClicked()
@@ -132,8 +115,8 @@ void ConfigPage::onApplyClicked()
     }
 
     int sent = 0;
-    for (int r = 0; r < m_params.size(); ++r) {
-        const ParamDef &p = m_params.at(r);
+    for (int r = 0; r < kNumConfigParams; ++r) {
+        const ParamDef &p = kConfigParams[r];
         if (!p.cmdPrefix)
             continue;
 
@@ -177,8 +160,8 @@ void ConfigPage::applyReadOnlyTint()
     const QColor tint = dark ? QColor(255, 255, 255, 34) : QColor(0, 0, 0, 24);
     const QBrush brush(tint);
 
-    for (int r = 0; r < m_params.size(); ++r) {
-        if (m_params.at(r).cmdPrefix)     // writable row -> no tint
+    for (int r = 0; r < kNumConfigParams; ++r) {
+        if (kConfigParams[r].cmdPrefix)     // writable row -> no tint
             continue;
         for (int c = 0; c < m_table->columnCount(); ++c)
             if (QTableWidgetItem *it = m_table->item(r, c))

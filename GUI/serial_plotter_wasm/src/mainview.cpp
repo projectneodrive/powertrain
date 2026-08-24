@@ -2,6 +2,7 @@
 #include "liveplot.h"
 #include "serialbridge.h"
 #include "telemetry.h"
+#include "configparams.h"
 #include "telemetryhub.h"
 
 #include <QCheckBox>
@@ -233,38 +234,30 @@ QWidget *MainView::buildTunerPanel()
     spLayout->addWidget(applyButton, 2, 0);
     spLayout->addWidget(stopButton, 2, 1);
 
-    // One PID group (KP/KI/KD spins + Apply) reused for the velocity, current
-    // and position loops. Apply sends the loop's command trio to the board.
-    auto makeGain = [](int decimals, double step) {
-        auto *s = new QDoubleSpinBox;
-        s->setRange(0.0, 1000.0);
-        s->setDecimals(decimals);
-        s->setSingleStep(step);
-        return s;
-    };
-    auto makeGainGroup = [this, &makeGain](
-            const QString &title, QDoubleSpinBox *&kp, QDoubleSpinBox *&ki,
-            QDoubleSpinBox *&kd, void (MainView::*applySlot)()) {
-        auto *group = new QGroupBox(title);
-        auto *g = new QGridLayout(group);
-        kp = makeGain(4, 0.01);
-        ki = makeGain(4, 0.01);
-        kd = makeGain(5, 0.001);
+    // One PID group (KP/KI/KD spins + Apply) built once per loop from m_gains.
+    // The decimals come from the shared config schema, so a spin never offers
+    // more precision than the firmware will print back.
+    QGroupBox *gainGroups[3];
+    for (int g = 0; g < 3; ++g) {
+        GainGroup &grp = m_gains[g];
+        auto *box = new QGroupBox(QString::fromUtf8(grp.title));
+        auto *grid = new QGridLayout(box);
+        static const char *kRowLabel[3] = {"KP", "KI", "KD"};
+        for (int i = 0; i < 3; ++i) {
+            const ParamDef *def = configParam(grp.keys[i]);
+            auto *spin = new QDoubleSpinBox;
+            spin->setRange(0.0, 1000.0);
+            spin->setDecimals(def ? def->decimals : 4);
+            spin->setSingleStep(def && def->decimals >= 5 ? 0.001 : 0.01);
+            grp.spin[i] = spin;
+            grid->addWidget(new QLabel(QLatin1String(kRowLabel[i])), i, 0);
+            grid->addWidget(spin, i, 1);
+        }
         auto *applyBtn = new QPushButton(QStringLiteral("Apply"));
-        g->addWidget(new QLabel(QStringLiteral("KP")), 0, 0); g->addWidget(kp, 0, 1);
-        g->addWidget(new QLabel(QStringLiteral("KI")), 1, 0); g->addWidget(ki, 1, 1);
-        g->addWidget(new QLabel(QStringLiteral("KD")), 2, 0); g->addWidget(kd, 2, 1);
-        g->addWidget(applyBtn, 3, 0, 1, 2);
-        connect(applyBtn, &QPushButton::clicked, this, applySlot);
-        return group;
-    };
-
-    auto *velGroup = makeGainGroup(QStringLiteral("Velocity PID gains"),
-        m_kpSpin, m_kiSpin, m_kdSpin, &MainView::onApplyGains);
-    auto *curGroup = makeGainGroup(QStringLiteral("Current PID gains"),
-        m_curKpSpin, m_curKiSpin, m_curKdSpin, &MainView::onApplyCurrentGains);
-    auto *posGroup = makeGainGroup(QStringLiteral("Position PID gains"),
-        m_posKpSpin, m_posKiSpin, m_posKdSpin, &MainView::onApplyPositionGains);
+        grid->addWidget(applyBtn, 3, 0, 1, 2);
+        connect(applyBtn, &QPushButton::clicked, this, [this, g] { applyGains(g); });
+        gainGroups[g] = box;
+    }
 
     // Read-back of the live config (serial Q): fills every spin above and shows
     // a summary, so you can see exactly what's on the board before tuning.
@@ -282,9 +275,8 @@ QWidget *MainView::buildTunerPanel()
     layout->addWidget(armGroup);
     layout->addWidget(spGroup);
     layout->addWidget(cfgGroup);
-    layout->addWidget(velGroup);
-    layout->addWidget(curGroup);
-    layout->addWidget(posGroup);
+    for (QGroupBox *g : gainGroups)
+        layout->addWidget(g);
     layout->addStretch(1);
 
     connect(armButton, &QPushButton::clicked, this, [this] { sendCommand(QStringLiteral("A")); });
@@ -443,25 +435,19 @@ void MainView::onStopSetpoint()
     sendCommand(setpointPrefix() + QStringLiteral("0"));
 }
 
-void MainView::onApplyGains()
+// Send one loop's KP/KI/KD, each with the command and precision the shared
+// schema gives for that key. A gain with no write command is skipped rather
+// than sent blind -- that is how a read-only row stays read-only here too.
+void MainView::applyGains(int group)
 {
-    sendCommand(QStringLiteral("KP") + QString::number(m_kpSpin->value(), 'f', 4));
-    sendCommand(QStringLiteral("KI") + QString::number(m_kiSpin->value(), 'f', 4));
-    sendCommand(QStringLiteral("KD") + QString::number(m_kdSpin->value(), 'f', 5));
-}
-
-void MainView::onApplyCurrentGains()
-{
-    sendCommand(QStringLiteral("JP") + QString::number(m_curKpSpin->value(), 'f', 4));
-    sendCommand(QStringLiteral("JI") + QString::number(m_curKiSpin->value(), 'f', 4));
-    sendCommand(QStringLiteral("JD") + QString::number(m_curKdSpin->value(), 'f', 5));
-}
-
-void MainView::onApplyPositionGains()
-{
-    sendCommand(QStringLiteral("PP") + QString::number(m_posKpSpin->value(), 'f', 4));
-    sendCommand(QStringLiteral("PI") + QString::number(m_posKiSpin->value(), 'f', 4));
-    sendCommand(QStringLiteral("PD") + QString::number(m_posKdSpin->value(), 'f', 5));
+    const GainGroup &grp = m_gains[group];
+    for (int i = 0; i < 3; ++i) {
+        const ParamDef *def = configParam(grp.keys[i]);
+        if (!def || !def->cmdPrefix || !grp.spin[i])
+            continue;
+        sendCommand(QLatin1String(def->cmdPrefix)
+                    + QString::number(grp.spin[i]->value(), 'f', def->decimals));
+    }
 }
 
 void MainView::onReadConfig()
@@ -471,36 +457,42 @@ void MainView::onReadConfig()
 
 void MainView::onConfigReceived(const QHash<QString, double> &fields)
 {
-    // Fill each spin from the matching cfg field (leave it alone if absent, so an
-    // old firmware that omits a key doesn't zero the box). Block signals so
-    // populating doesn't look like a user edit.
-    auto setIf = [&](QDoubleSpinBox *s, const char *key) {
-        const QString k = QString::fromLatin1(key);
-        if (s && fields.contains(k)) {
-            QSignalBlocker block(s);
-            s->setValue(fields.value(k));
+    // Fill each spin from its cfg field, leaving it alone when the key is
+    // absent -- an older firmware that omits a key must not zero the box.
+    // Signals blocked so populating does not read as a user edit.
+    for (GainGroup &grp : m_gains) {
+        for (int i = 0; i < 3; ++i) {
+            const QString k = QLatin1String(grp.keys[i]);
+            if (!grp.spin[i] || !fields.contains(k))
+                continue;
+            QSignalBlocker block(grp.spin[i]);
+            grp.spin[i]->setValue(fields.value(k));
         }
-    };
-    setIf(m_kpSpin, "vel_p");     setIf(m_kiSpin, "vel_i");     setIf(m_kdSpin, "vel_d");
-    setIf(m_curKpSpin, "cur_p");  setIf(m_curKiSpin, "cur_i");  setIf(m_curKdSpin, "cur_d");
-    setIf(m_posKpSpin, "pos_gain"); setIf(m_posKiSpin, "pos_i"); setIf(m_posKdSpin, "pos_d");
+    }
 
     if (!m_configSummary)
         return;
-    auto g = [&](const char *key, int dec) {
-        const QString k = QString::fromLatin1(key);
-        return fields.contains(k) ? QString::number(fields.value(k), 'f', dec)
-                                  : QStringLiteral("--");
+
+    // Summary lines: the two limits, then one line per PID loop. Values and
+    // their precision come from the schema, so a parameter added there shows up
+    // here without touching this function.
+    auto show = [&](const char *key) {
+        const ParamDef *def = configParam(key);
+        const QString k = QLatin1String(key);
+        return (def && fields.contains(k))
+                   ? QString::number(fields.value(k), 'f', def->decimals)
+                   : QStringLiteral("--");
     };
-    m_configSummary->setText(
-        QStringLiteral("Limits:  current ") + g("current_limit", 2) +
-        QStringLiteral(" A   velocity ") + g("vel_limit", 2) + QStringLiteral(" rad/s\n") +
-        QStringLiteral("Velocity PID:  P ") + g("vel_p", 4) + QStringLiteral("  I ") +
-            g("vel_i", 4) + QStringLiteral("  D ") + g("vel_d", 5) + QStringLiteral("\n") +
-        QStringLiteral("Current PID:   P ") + g("cur_p", 4) + QStringLiteral("  I ") +
-            g("cur_i", 4) + QStringLiteral("  D ") + g("cur_d", 5) + QStringLiteral("\n") +
-        QStringLiteral("Position PID:  P ") + g("pos_gain", 4) + QStringLiteral("  I ") +
-            g("pos_i", 4) + QStringLiteral("  D ") + g("pos_d", 5));
+
+    QStringList lines;
+    lines << QStringLiteral("Limits:  current %1 A   velocity %2 rad/s")
+                 .arg(show("current_limit"), show("vel_limit"));
+    for (const GainGroup &grp : m_gains) {
+        lines << QStringLiteral("%1:  P %2   I %3   D %4")
+                     .arg(QString::fromUtf8(grp.title).remove(QStringLiteral(" gains")),
+                          show(grp.keys[0]), show(grp.keys[1]), show(grp.keys[2]));
+    }
+    m_configSummary->setText(lines.join(QLatin1Char('\n')));
     setStatus(QStringLiteral("Config loaded from board"));
 }
 

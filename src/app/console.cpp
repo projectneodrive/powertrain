@@ -93,67 +93,41 @@ void cmdClearErrors(float) {
   io::console::ackMsg("C", "clear-errors requested");
 }
 
-// ---- Velocity PID (Nm/(rad/s)) ---------------------------------------------
-void cmdVelP(float v) {
-  float old = state::axis.vel_gain;     state::axis.vel_gain     = v;
-  io::console::ackFloat("KP", "vel_gain", old, v, 4);
-  state::axis.req_vel_gains = true;
-}
-void cmdVelI(float v) {
-  float old = state::axis.vel_int_gain; state::axis.vel_int_gain = v;
-  io::console::ackFloat("KI", "vel_int_gain", old, v, 4);
-  state::axis.req_vel_gains = true;
-}
-void cmdVelD(float v) {
-  float old = state::axis.vel_d_gain;   state::axis.vel_d_gain   = v;
-  io::console::ackFloat("KD", "vel_d_gain", old, v, 5);
-  state::axis.req_vel_gains = true;
-}
-void cmdVelReapply(float) {
-  io::console::ackMsg("K", "reapply vel gains");
-  state::axis.req_vel_gains = true;
-}
+// ---- PID gains --------------------------------------------------------------
+//  The setters differ only in the field they write, the name the ack shows and
+//  the decimals it shows it to, so they are generated. Each raises its loop's
+//  req_* flag, which is what makes app::control push the whole trio into
+//  SimpleFOC on its next scan (a gain is never applied from this task).
+//
+//  The ack NAMES are wire format — host tooling greps "AK KP: vel_gain ..." —
+//  so they are spelled out here rather than derived from the field name.
+// ---------------------------------------------------------------------------
+#define GAIN_SETTER(fn, tag, field, name, prec, reqflag)   void fn(float v) {                                         float old = state::axis.field;                           state::axis.field = v;                                   io::console::ackFloat(tag, name, old, v, prec);          state::axis.reqflag = true;                            }
+#define GAIN_REAPPLY(fn, tag, msg, reqflag)   void fn(float) { io::console::ackMsg(tag, msg); state::axis.reqflag = true; }
 
-// ---- Current PID (V/A) ------------------------------------------------------
-void cmdCurP(float v) {
-  float old = state::axis.cur_p_gain;   state::axis.cur_p_gain   = v;
-  io::console::ackFloat("JP", "cur_p", old, v, 4);
-  state::axis.req_cur_gains = true;
-}
-void cmdCurI(float v) {
-  float old = state::axis.cur_int_gain; state::axis.cur_int_gain = v;
-  io::console::ackFloat("JI", "cur_i", old, v, 4);
-  state::axis.req_cur_gains = true;
-}
-void cmdCurD(float v) {
-  float old = state::axis.cur_d_gain;   state::axis.cur_d_gain   = v;
-  io::console::ackFloat("JD", "cur_d", old, v, 5);
-  state::axis.req_cur_gains = true;
-}
-void cmdCurReapply(float) {
-  io::console::ackMsg("J", "reapply current gains");
-  state::axis.req_cur_gains = true;
-}
+GAIN_SETTER(cmdVelP, "KP", vel_gain,     "vel_gain",     4, req_vel_gains)
+GAIN_SETTER(cmdVelI, "KI", vel_int_gain, "vel_int_gain", 4, req_vel_gains)
+GAIN_SETTER(cmdVelD, "KD", vel_d_gain,   "vel_d_gain",   5, req_vel_gains)
+GAIN_REAPPLY(cmdVelReapply, "K", "reapply vel gains", req_vel_gains)
 
-// ---- Position PID -----------------------------------------------------------
+GAIN_SETTER(cmdCurP, "JP", cur_p_gain,   "cur_p",        4, req_cur_gains)
+GAIN_SETTER(cmdCurI, "JI", cur_int_gain, "cur_i",        4, req_cur_gains)
+GAIN_SETTER(cmdCurD, "JD", cur_d_gain,   "cur_d",        5, req_cur_gains)
+GAIN_REAPPLY(cmdCurReapply, "J", "reapply current gains", req_cur_gains)
+
+GAIN_SETTER(cmdPosI, "PI", pos_int_gain, "pos_i",        4, req_pos_gains)
+GAIN_SETTER(cmdPosD, "PD", pos_d_gain,   "pos_d",        5, req_pos_gains)
+GAIN_REAPPLY(cmdPosReapply, "P", "reapply position gains", req_pos_gains)
+
+#undef GAIN_REAPPLY
+#undef GAIN_SETTER
+
+// Position P is not generated: a negative position gain inverts the feedback
+// sign and drives the axis away from its target, so it is clamped at zero.
 void cmdPosP(float v) {
   float old = state::axis.pos_gain;
   state::axis.pos_gain = (v > 0.0f) ? v : 0.0f;
   io::console::ackFloat("PP", "pos_p", old, state::axis.pos_gain, 4);
-  state::axis.req_pos_gains = true;
-}
-void cmdPosI(float v) {
-  float old = state::axis.pos_int_gain; state::axis.pos_int_gain = v;
-  io::console::ackFloat("PI", "pos_i", old, v, 4);
-  state::axis.req_pos_gains = true;
-}
-void cmdPosD(float v) {
-  float old = state::axis.pos_d_gain;   state::axis.pos_d_gain   = v;
-  io::console::ackFloat("PD", "pos_d", old, v, 5);
-  state::axis.req_pos_gains = true;
-}
-void cmdPosReapply(float) {
-  io::console::ackMsg("P", "reapply position gains");
   state::axis.req_pos_gains = true;
 }
 
@@ -181,31 +155,17 @@ void cmdPosGain(float v) {
 }
 
 // ---------------------------------------------------------------------------
-//  Q — dump the live configuration on a single line prefixed "cfg " so the GUI
-//  can tell it apart from telemetry ("t=..."). The limit and gain fields are
-//  settable over serial (LC/LV; pos PP/PI/PD; vel KP/KI/KD; current JP/JI/JD);
-//  the ones after them are compile-time hardware constants, read-only to the GUI.
+//  Q — dump the live configuration on one line prefixed "cfg " so the GUI can
+//  tell it apart from telemetry ("t=..."). Fields, order and precision all come
+//  from include/config_schema.h, which the GUI's config table and the ESP32
+//  station compile too — so the three cannot disagree about what Q reports.
 // ---------------------------------------------------------------------------
 void cmdDumpConfig(float) {
-  auto& motor = io::motor::motor;
-  Serial.print("cfg current_limit="); Serial.print(motor.current_limit, 3);
-  Serial.print(" vel_limit=");        Serial.print(motor.velocity_limit, 3);
-  Serial.print(" pos_gain=");         Serial.print(motor.P_angle.P, 4);
-  Serial.print(" pos_i=");            Serial.print(motor.P_angle.I, 4);
-  Serial.print(" pos_d=");            Serial.print(motor.P_angle.D, 5);
-  Serial.print(" vel_p=");            Serial.print(state::axis.vel_gain, 4);
-  Serial.print(" vel_i=");            Serial.print(state::axis.vel_int_gain, 4);
-  Serial.print(" vel_d=");            Serial.print(state::axis.vel_d_gain, 5);
-  Serial.print(" cur_p=");            Serial.print(motor.PID_current_q.P, 4);
-  Serial.print(" cur_i=");            Serial.print(motor.PID_current_q.I, 4);
-  Serial.print(" cur_d=");            Serial.print(motor.PID_current_q.D, 5);
-  Serial.print(" pole_pairs=");       Serial.print(CFG_POLE_PAIRS);
-  Serial.print(" kv=");               Serial.print(CFG_KV, 2);
-  Serial.print(" kt=");               Serial.print(CFG_KT, 4);
-  Serial.print(" phase_r=");          Serial.print(motor.phase_resistance, 4);
-  Serial.print(" phase_l=");          Serial.print(motor.phase_inductance * 1e6f, 2);
-  Serial.print(" vbus_nom=");         Serial.print(CFG_VBUS_NOMINAL, 1);
-  Serial.print(" volt_limit=");       Serial.print(motor.voltage_limit, 1);
+  auto& motor = io::motor::motor;   // named by the schema's firmware expressions
+  Serial.print("cfg");
+#define CONFIG_PARAM(key, label, unit, cmd, prec, demo, fw, br)   Serial.print(" " #key "="); Serial.print((float)(fw), prec);
+#include "config_schema.h"
+#undef CONFIG_PARAM
   Serial.println();
 }
 

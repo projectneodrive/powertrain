@@ -52,9 +52,6 @@ private slots:
     // Tuner panel
     void onApplySetpoint();
     void onStopSetpoint();
-    void onApplyGains();
-    void onApplyCurrentGains();
-    void onApplyPositionGains();
     void onReadConfig();
     void onConfigReceived(const QHash<QString, double> &fields);
 
@@ -104,14 +101,23 @@ private:
     // Tuner widgets
     QComboBox *m_modeCombo = nullptr;
     QDoubleSpinBox *m_setpointSpin = nullptr;
-    QDoubleSpinBox *m_kpSpin = nullptr;      // velocity PID
-    QDoubleSpinBox *m_kiSpin = nullptr;
-    QDoubleSpinBox *m_kdSpin = nullptr;
-    QDoubleSpinBox *m_curKpSpin = nullptr;   // current PID
-    QDoubleSpinBox *m_curKiSpin = nullptr;
-    QDoubleSpinBox *m_curKdSpin = nullptr;
-    QDoubleSpinBox *m_posKpSpin = nullptr;   // position PID
-    QDoubleSpinBox *m_posKiSpin = nullptr;
-    QDoubleSpinBox *m_posKdSpin = nullptr;
+
+    // The three PID loops are identical in everything but which cfg keys they
+    // read and write, so they are one array rather than nine members and three
+    // near-identical slots. The keys index the shared config schema, which is
+    // where the write command ("KP") and the decimals come from -- so the tuner
+    // and the Motor Config page always send a gain the same way.
+    struct GainGroup {
+        const char *title;
+        const char *keys[3];                 // cfg keys, in KP / KI / KD order
+        QDoubleSpinBox *spin[3] = {nullptr, nullptr, nullptr};
+    };
+    GainGroup m_gains[3] = {
+        {"Velocity PID gains", {"vel_p", "vel_i", "vel_d"}, {}},
+        {"Current PID gains",  {"cur_p", "cur_i", "cur_d"}, {}},
+        {"Position PID gains", {"pos_gain", "pos_i", "pos_d"}, {}},
+    };
+    void applyGains(int group);              // push one loop's trio to the board
+
     QLabel *m_configSummary = nullptr;       // live config read-back (Q)
 };

@@ -1,13 +1,17 @@
-// Motor configuration table. "Read from board" sends Q and fills the table
-// from the firmware's "cfg ..." reply; editable rows can be pushed back with
-// the matching serial commands (LC/LV/G/KP/KI/KD). Hardware constants
-// (pole pairs, KV, phase R/L, ...) are shown read-only.
+// Motor configuration table. "Read from board" sends Q and fills the table from
+// the firmware's "cfg ..." reply; editable rows can be pushed back with the
+// serial command the schema names for them. Hardware constants (pole pairs, KV,
+// phase R/L, ...) have no such command and are shown read-only.
+//
+// The rows themselves come from configparams.h, i.e. from the schema the
+// firmware compiles -- this class holds no parameter list of its own.
 #pragma once
 
 #include <QHash>
 #include <QString>
-#include <QVector>
 #include <QWidget>
+
+#include "configparams.h"
 
 QT_BEGIN_NAMESPACE
 class QLabel;
@@ -29,21 +33,10 @@ private slots:
     void onConfigReceived(const QHash<QString, double> &fields);
 
 private:
-    // One table row. cmdPrefix != nullptr means the value is writable over
-    // serial with that command (e.g. "LC" -> "LC4.0").
-    struct ParamDef {
-        const char *key;         // key in the firmware's cfg dump
-        const char *label;
-        const char *unit;
-        const char *cmdPrefix;   // serial command prefix, or nullptr = read-only
-        int decimals;
-    };
-
     void setStatus(const QString &text);
     void applyReadOnlyTint();
 
     QTableWidget *m_table = nullptr;
     QLabel *m_statusLabel = nullptr;
-    QVector<ParamDef> m_params;
     QHash<QString, double> m_lastRead;   // to detect edited rows
 };

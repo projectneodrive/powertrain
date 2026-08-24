@@ -223,26 +223,12 @@ void cmdPosGain(float v) {
 //  over the board's USB console, or the board is running a different build.
 // ---------------------------------------------------------------------------
 void cmdDumpConfig(float) {
-  const Commanded& c = g_ctx.state->c;
-  Serial.print("cfg current_limit="); Serial.print(c.current_limit, 3);
-  Serial.print(" vel_limit=");        Serial.print(c.vel_limit, 3);
-  Serial.print(" pos_gain=");         Serial.print(c.pos_gain, 4);
-  Serial.print(" pos_i=");            Serial.print(CFG_POS_I, 4);
-  Serial.print(" pos_d=");            Serial.print(CFG_POS_D, 5);
-  Serial.print(" vel_p=");            Serial.print(c.vel_gain, 4);
-  Serial.print(" vel_i=");            Serial.print(c.vel_int_gain, 4);
-  Serial.print(" vel_d=");            Serial.print(CFG_VEL_D, 5);
-  Serial.print(" cur_p=");            Serial.print(CFG_CUR_P, 4);
-  Serial.print(" cur_i=");            Serial.print(CFG_CUR_I, 4);
-  Serial.print(" cur_d=");            Serial.print(CFG_CUR_D, 5);
-  Serial.print(" pole_pairs=");       Serial.print(CFG_POLE_PAIRS);
-  Serial.print(" kv=");               Serial.print(CFG_KV, 2);
-  Serial.print(" kt=");               Serial.print(CFG_KT, 4);
-  Serial.print(" phase_r=");          Serial.print(CFG_PHASE_R, 4);
-  Serial.print(" phase_l=");          Serial.print(CFG_PHASE_L * 1e6f, 2);
-  Serial.print(" vbus_nom=");         Serial.print(CFG_VBUS_NOMINAL, 1);
-  Serial.print(" volt_limit=");       Serial.print(CFG_VOLT_LIMIT, 1);
-  Serial.println(" src=bridge");      // so the GUI can tell where this came from
+  const Commanded& c = g_ctx.state->c;   // named by the schema's bridge exprs
+  Serial.print("cfg");
+#define CONFIG_PARAM(key, label, unit, cmd, prec, demo, fw, br)   Serial.print(" " #key "="); Serial.print((float)(br), prec);
+#include "config_schema.h"
+#undef CONFIG_PARAM
+  Serial.println(" src=bridge");    // so the GUI can tell where this came from
 }
 
 // ---------------------------------------------------------------------------
