@@ -70,8 +70,18 @@ chart/checkbox list from the *same* file. To add a signal, add one
 streams from the board and shows up as a new graph (with its own **Visible
 graphs** checkbox) automatically. `expr` is a firmware-side value expression the
 GUI never compiles; use `TELEMETRY_CHANNEL_HALL` for signals that only exist on
-hall builds. (Demo values are synthetic, so give a new channel one in
-`src/demosource.cpp` too if you want it to animate offline.)
+hall builds. Demo mode's line is generated from the same table, so the channel
+appears there too — reading zero until you give it a value in
+`src/demosource.cpp`'s `kDemoValues` table.
+
+### Adding a configuration parameter (also one place)
+
+The Motor Config table, the PID tuner's read-back and demo mode's `cfg …` line
+all come from [`include/config_schema.h`](../../include/config_schema.h), via
+[`src/configparams.h`](src/configparams.h). One `CONFIG_PARAM` line adds the row,
+its unit, its precision and — if you give it a serial command — makes it
+editable. A parameter with `""` for its command renders read-only, because
+nothing can write it.
 
 ## How USB works in the browser (important)
 

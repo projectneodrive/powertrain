@@ -48,6 +48,7 @@ up, through a single line in [`platformio.ini`](platformio.ini):
 | Which commands the board implements, which frames it broadcasts, how often | [`../include/can_commands.h`](../include/can_commands.h) | send-side checks, RX decoders, the link-loss timeout |
 | The serial command set | [`../include/console_commands.h`](../include/console_commands.h) | this station's console + its help banner |
 | The telemetry channels | [`../include/telemetry_schema.h`](../include/telemetry_schema.h) | the `key=value` line the GUI plots |
+| The `cfg …` configuration line | [`../include/config_schema.h`](../include/config_schema.h) | this station's `Q` reply, field for field |
 | Node id, bit rate, limits, gain defaults | [`../include/config/motor_config.h`](../include/config/motor_config.h) | `CFG_CAN_NODE_ID`, `CFG_CAN_BAUD`, `CFG_*_LIMIT*`, `CFG_VEL_P`… |
 | Axis states, control modes, **error-bit names** | [`../include/axis_vocab.h`](../include/axis_vocab.h) | decoding a heartbeat into `IDLE -> CLOSED_LOOP` and an error word into `[MOTOR_FAILED\|ENCODER_FAILED]` instead of raw hex |
 
@@ -64,6 +65,7 @@ four of these are verified to fire:
 |---|---|
 | New line in `console_commands.h` | **Compile error** — `cmdYourThing` not declared. The bridge must say how the command maps onto CANSimple, or that it does not. |
 | New `TELEMETRY_CHANNEL` in `telemetry_schema.h` | **Link error** — `bridge::channel::yourkey` undefined. Somebody must decide whether that value is reachable over CAN. |
+| New `CONFIG_PARAM` in `config_schema.h` | **Compile error** — its `br` column names a value this station does not have. CANSimple has no configuration read-back, so it must report what it last commanded, or the constant it was built with. |
 | New `CAN_TX_CYCLIC` in `can_commands.h` | **Link error** — `Axis::rx_sendYourThing` undefined. A new broadcast cannot be silently dropped. |
 | Sending a command with no `CAN_RX` handler | **`static_assert`** at the send site: *"the board would ignore the frame"*. |
 | `CFG_CAN_BAUD` changed to an unsupported rate | **`#error`** — no ESP32 TWAI timing constant for it. |
@@ -139,24 +141,26 @@ hall-calibration command exists.
       Serial (host GUI)              pot_input
 ```
 
-| Library | What it is | Rule it obeys |
-|---|---|---|
-| [`lib/cansimple/`](lib/cansimple/) | CANSimple over the ESP32 TWAI controller: framing, payload packing, TX/RX, and the compile-time queries generated from `can_commands.h`. | Knows what a *frame* is. Never knows what an *axis* is. |
-| [`lib/can_bridge/`](lib/can_bridge/) | The application: the axis, the console, the telemetry line, the shared state. | The only place that knows both sides. |
-| [`lib/can_diag/`](lib/can_diag/) | Frame trace, node discovery, bus alerts, health counters. | Pure observation — nothing here changes what is transmitted. |
-| [`lib/logging/`](lib/logging/log.h) | Levelled, edge-triggered, deduplicated, rate-capped event log, plus the axis-name decoders. | Everything printed for a human goes through it. Nothing periodic does. |
-| [`lib/pot_input/`](lib/pot_input/) | The spring-return potentiometer, read as a velocity joystick. | Knows nothing about CAN; returns a number, the caller decides. |
+Everything lives flat in [`src/`](src/) — one module per concern, no PlatformIO
+libraries. Three thousand lines across five `lib/` directories meant six places
+to look and `lib_ldf_mode = deep+` to resolve the includes between them.
 
-Inside `lib/can_bridge/`:
+| Module | What it is | Rule it obeys |
+|---|---|---|
+| [`cansimple.{h,cpp}`](src/cansimple.h) | CANSimple over the ESP32 TWAI controller: framing, payload packing, TX/RX, the compile-time queries generated from `can_commands.h` — **and** the bus diagnostics that tap it (frame trace, node discovery, alerts, health counters, `candiag::`). | Knows what a *frame* is. Never knows what an *axis* is. The diagnostics half is pure observation: nothing there changes what is transmitted. |
+| [`log.{h,cpp}`](src/log.h) | Levelled, edge-triggered, deduplicated, rate-capped event log, **plus** the axis-name decoders (`axisnames::`) generated from `axis_vocab.h`. | Everything printed for a human goes through it. Nothing periodic does. Both halves exist to turn machine values into operator words. |
+| [`pot_input.{h,cpp}`](src/pot_input.h) | The spring-return potentiometer, read as a velocity joystick. | Knows nothing about CAN; returns a number, the caller decides. |
+
+The bridge itself — the only place that knows both sides:
 
 | File | Contents |
 |---|---|
-| [`bridge_state.h`](lib/can_bridge/bridge_state.h) | What the board told us (`Measured`) vs what we told the board (`Commanded`) — kept apart on purpose. |
-| [`bridge_axis.{h,cpp}`](lib/can_bridge/bridge_axis.h) | One method per operator verb, one decoder per broadcast frame. **The only file that knows a payload's wire encoding**, including every rad ↔ rev conversion. |
-| [`bridge_console.{h,cpp}`](lib/can_bridge/bridge_console.h) | The dispatch table: the firmware's commands, then this station's. |
-| [`bridge_commands.h`](lib/can_bridge/bridge_commands.h) | X-macro list of the station's **extra** commands. |
-| [`bridge_telemetry.{h,cpp}`](lib/can_bridge/bridge_telemetry.h) | The two machine-readable lines: one accessor per schema channel for `t=…`, and the `can …` status line. |
-| [`can_bridge.{h,cpp}`](lib/can_bridge/can_bridge.h) | Assembly and the scan order. Read `poll()` first. |
+| [`bridge_state.h`](src/bridge_state.h) | What the board told us (`Measured`) vs what we told the board (`Commanded`) — kept apart on purpose. |
+| [`bridge_axis.{h,cpp}`](src/bridge_axis.h) | One method per operator verb, one decoder per broadcast frame. **The only file that knows a payload's wire encoding**, including every rad ↔ rev conversion. |
+| [`bridge_console.{h,cpp}`](src/bridge_console.h) | The dispatch table: the firmware's commands, then this station's. |
+| [`bridge_commands.h`](src/bridge_commands.h) | X-macro list of the station's **extra** commands. |
+| [`bridge_telemetry.{h,cpp}`](src/bridge_telemetry.h) | The two machine-readable lines: one accessor per schema channel for `t=…`, and the `can …` status line. |
+| [`can_bridge.{h,cpp}`](src/can_bridge.h) | Assembly and the scan order. Read `poll()` first. |
 
 The scan order in `poll()` mirrors the board's own COMMS task — **drain CAN, run
 the logic, publish** — so a command issued in a given pass acts on that pass's
@@ -192,7 +196,7 @@ entry catches the line.
 carries P **and** I. That is why `bridge_state.h` caches both halves: you cannot
 change one without resending the other.
 
-### The station's own (`lib/can_bridge/bridge_commands.h`)
+### The station's own (`src/bridge_commands.h`)
 
 | Command | Does |
 |---|---|
@@ -259,7 +263,7 @@ and an axis nobody armed otherwise look identical.
 ### Potentiometer calibration at startup
 
 The pot's rest point is measured at boot, in
-[`Joystick::begin()`](lib/pot_input/pot_input.h). A spring-return pot is *at
+[`Joystick::begin()`](src/pot_input.h). A spring-return pot is *at
 rest* when the board powers up, which is the one moment it can be measured
 without asking anybody to hold it there.
 
@@ -352,7 +356,7 @@ The split that fixes it:
 
 | | Goes to | Why |
 |---|---|---|
-| **Events** — something *changed* | the event log ([`lib/logging`](lib/logging/log.h)) | Edge-triggered, so it prints when a thing becomes true, not on every scan that observes it |
+| **Events** — something *changed* | the event log ([the event log](src/log.h)) | Edge-triggered, so it prints when a thing becomes true, not on every scan that observes it |
 | **State** — counters, link, error words | the `can …` line → the GUI's **CAN Devices** page | Only meaningful as a live table; as prose it was the noise |
 
 ### The event log
@@ -464,7 +468,7 @@ sides. If it has no CANSimple equivalent, call `notOverCan()` — that is a
 complete answer, and the point of forcing the decision.
 
 **A command only this station has** — one line in
-[`bridge_commands.h`](lib/can_bridge/bridge_commands.h) plus a handler in
+[`bridge_commands.h`](src/bridge_commands.h) plus a handler in
 `bridge_console.cpp`. Pick a key that is not in the firmware's table.
 
 **Anything that touches a payload's bytes** goes in `bridge_axis.cpp`, next to

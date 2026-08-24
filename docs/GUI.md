@@ -57,9 +57,13 @@ and log are shared across all of them.
   PID Tuner **share the same graphs** — switching between them only swaps the
   left panel.
 - **Motor Config** — a table of motor parameters. **Read from board (Q)** pulls
-  the live values; the writable rows (current/velocity limit, position gain,
-  velocity PID) can be edited and pushed back with **Apply changes**. Hardware
-  constants (pole pairs, KV, phase R/L …) are read-only.
+  the live values; the writable rows (the limits and all three PID loops) can be
+  edited and pushed back with **Apply changes**. Hardware constants (pole pairs,
+  KV, phase R/L …) are read-only, because no serial command can write them.
+  Every row — its label, unit, precision and write command — comes from
+  [`include/config_schema.h`](../include/config_schema.h), the same table the
+  firmware generates its `Q` reply from and the ESP32 station generates its own
+  from. Adding a parameter there adds the row here.
 - **CAN Devices** — the state of the CAN link, when you are connected to the
   **ESP32 control station** ([`can_utilities`](../can_utilities/README.md))
   rather than to the board directly. See below.
@@ -128,8 +132,8 @@ boot banner, every `AK …` acknowledgement — is still shown, as Info.
 
 ## Working with the graphs
 
-- Stacked charts (Target / Iq / Vel / Pos / Vbus, plus the sensorless
-  obsdV / blend on hall builds). They're **compact** and share the height so
+- Stacked charts (Target / Iq / Vel / Pos / Vbus / Regen / Brake, plus the
+  sensorless **blend** and **obs dV** on hall builds — see below). They're **compact** and share the height so
   several are visible at once; the area **scrolls** when the window is too short.
 - **Show/hide** individual graphs with the **Visible graphs** checkboxes on the
   Live Plotter panel — untick the ones you don't care about and the rest expand
@@ -140,6 +144,26 @@ boot banner, every `AK …` acknowledgement — is still shown, as Info.
   you care about taller and shrink the rest.
 - **Hide panel** (Ctrl+B) collapses the left control panel for full-width plots.
 - **Clear graphs** buttons are on both the Plotter and Tuner panels.
+
+## Commissioning the sensorless observer
+
+Two of the charts exist for one job. On hall builds the firmware streams:
+
+- **blend** — how much of the angle and velocity comes from the flux observer
+  rather than the halls. 0 is pure hall, 1 is pure observer, and anything
+  between is the handoff across
+  `[CFG_SENSORLESS_VEL_LO, CFG_SENSORLESS_VEL_HI]`.
+- **obs dV** — the observer's *disagreement* with the hall, `v_obs - v_hall`
+  in rad/s. This is the number that decides whether the handoff is safe.
+
+`motor_config.h` states the procedure and it is worth following: keep
+`CFG_SENSORLESS_ENABLE` at 0, spin the motor over its whole range, and confirm
+**obs dV stays near zero** before turning the handoff on. `HybridSensor` gates
+the handoff on that same value (tolerance `0.5 + 0.15·|v_hall|`), so an observer
+that disagrees makes **blend** chatter between 0 and 1 — and every flip is a step
+change in the velocity the PID sees. On the plots that reads as erratic motion
+in the crossover band, with the velocity trace jumping by rad/s at a time while
+`Iq` shows no torque that could have caused it.
 
 ## Safety
 

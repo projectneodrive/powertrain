@@ -51,7 +51,12 @@ Three layers and one rule.
                                      │
                             src/io/ — the ONLY code that
                             touches a register, pin or peripheral
+                            io.h (gate, brake, vbus, can, console)
+                            io_motor.h (SimpleFOC + the sensor)
 ```
+
+Eighteen files, about 2,400 lines. If a file here does not obviously belong to
+one of those four rows, that is a bug in the structure, not a detail.
 
 **A module** is one `.cpp` under `src/app/` plus two lines in
 [`src/app.h`](../src/app.h). It owns its state as file-statics, reads and writes
@@ -95,7 +100,7 @@ void run() {
 |---|---|---|
 | 1 | `io::brake::preInit()` | AUX gates LOW **before** anything switches those pins to an alternate function, so the half-bridge never passes through an undefined state at power-up |
 | 2 | `io::gate::preInit()` | DRV8301 GPIO + reset pulse. Before `Serial` because the DRV needs its 50 ms settling anyway, and the power stage should reach a known state as early as possible |
-| 3 | `analogReadResolution(12)` | Board-global, owned by no single module; both the current sense and `io_vbus` assume it |
+| 3 | `analogReadResolution(12)` | Board-global, owned by no single module; both the current sense and `io::vbus` assume it |
 | 4 | `Serial.begin()` + banner | Waits up to 2 s for USB CDC enumeration, then gives up rather than hanging headless |
 | 5 | `io::gate::init()` | DRV8301 over SPI3: out of reset, amplifier gain |
 | 6 | `io::motor::init()` | Sensor → driver → current sense → motor parameters. Sets `state::at_boot.isense_ok` |
@@ -488,14 +493,27 @@ Four conditions any blocking sequence must satisfy:
 `src/io/` is the **only** code allowed to touch a register, a pin or a
 peripheral. That is what keeps peripheral ownership checkable in one place.
 
-| Module | Owns |
+Two files, one namespace per peripheral.
+
+[`io.h`](../src/io/io.h) / `io.cpp` hold the five small ones:
+
+| Namespace | Owns |
 |---|---|
-| `io_motor` | The SimpleFOC object graph: driver, motor, sensor → smoothing → hybrid, current sense. Writes `state::at_boot.isense_ok` |
-| `io_gate` | DRV8301 over SPI3, plus `EN_GATE` / `nFAULT` as inline accessors |
-| `io_brake` | TIM2 CH3/CH4 centre-aligned complementary PWM with dead time in ticks |
-| `io_vbus` | The dedicated Vbus ADC — a blocking one-shot, ~24 µs |
-| `io_can` | The `OdriveCAN` instance bound to `state::axis`. Three lines of substance |
-| `io_console` | Serial line assembly and the `AK …` acknowledgement format |
+| `io::gate` | DRV8301 over SPI3, plus `EN_GATE` / `nFAULT` as inline accessors |
+| `io::brake` | TIM2 CH3/CH4 centre-aligned complementary PWM with dead time in ticks |
+| `io::vbus` | The dedicated Vbus ADC — a blocking one-shot, ~24 µs |
+| `io::can` | The `OdriveCAN` instance bound to `state::axis`. Three lines of substance |
+| `io::console` | Serial line assembly and the `AK …` acknowledgement format |
+
+They were a header/source pair each — ten files to say "here is the gate driver,
+the brake bridge, the bus ADC, the CAN controller and the console". They are
+small, they change together, and they are the same kind of thing.
+
+[`io_motor.h`](../src/io/io_motor.h) / `io_motor.cpp` stay separate: they own the
+SimpleFOC object graph (driver, motor, sensor → smoothing → hybrid, current
+sense) and write `state::at_boot.isense_ok`. Keeping them out of `io.h` means
+only the modules that actually drive the motor pay for SimpleFOC and the
+`SENSOR_TYPE` switch in their include graph.
 
 `HallSensorSmoothVel.h` and `HybridSensor.h` are SimpleFOC `Sensor`
 implementations rather than I/O modules; they live here because they are the
@@ -511,7 +529,7 @@ reasoned about without reading register code.
 
 ## 9. The declaration tables
 
-Four X-macro tables in `include/` are compiled by **more than one project**. Add
+Five X-macro tables in `include/` are compiled by **more than one project**. Add
 a line and every derived artefact updates.
 
 | Table | Expanded by |
@@ -519,6 +537,7 @@ a line and every derived artefact updates.
 | [`console_commands.h`](../include/console_commands.h) | `app/console.cpp` (dispatch + banner) **and** `can_utilities` |
 | [`can_commands.h`](../include/can_commands.h) | `lib/odrive_can/` (×4) **and** `can_utilities` |
 | [`telemetry_schema.h`](../include/telemetry_schema.h) | `app/console.cpp`, the **web GUI**, and `can_utilities` |
+| [`config_schema.h`](../include/config_schema.h) | the `Q` handler in `app/console.cpp`, the station's, the GUI's config table **and** its demo mode |
 | [`axis_vocab.h`](../include/axis_vocab.h) | `axis_io.h` enums, `can_utilities` decoder, the GUI's CAN page |
 
 Plus [`can_ids.h`](../include/can_ids.h), the CANSimple arbitration ids, shared
@@ -530,13 +549,23 @@ with `can_utilities`.
 > the GUI includes `telemetry_schema.h` and `axis_vocab.h` by bare name. Do not
 > move it.
 
-### `telemetry_schema.h` has a firmware-private column
+### Two tables carry columns only one consumer compiles
 
-Its `expr` column names firmware symbols (`state::control.active_target`, …).
-Both other consumers **discard** that argument, so editing it cannot break them —
-and forgetting to update it is a firmware compile error, which is the good kind.
-Its one constraint: `expr` must be a valid preprocessor argument — balanced
-parentheses, **no top-level commas**.
+`telemetry_schema.h`'s `expr` column names firmware symbols
+(`state::control.active_target`, …). `config_schema.h` goes further and carries
+**two** value columns — `fw` for the board and `br` for the ESP32 station, which
+read the same parameter from entirely different places (the station has no
+configuration read-back over CANSimple, so its half is what it last commanded).
+
+Consumers that do not need a column **discard** it, so editing it cannot break
+them; forgetting to update it is a compile error in the one project that does,
+which is the good kind. The constraint on all three: a value expression must be
+a valid preprocessor argument — balanced parentheses, **no top-level commas**.
+
+That `config_schema.h` exists at all is a lesson worth keeping. The `cfg …` line
+was hand-written in five places, and they had already drifted: the station
+printed fields the GUI's table did not show, and the table displayed a precision
+the firmware never used.
 
 ---
 
@@ -704,7 +733,7 @@ publish rate follows automatically.
 
 ### Replace or remove the fieldbus
 
-`io_can` and `lib/odrive_can/` are the only code that knows CANSimple exists.
+`io::can` and `lib/odrive_can/` are the only code that knows CANSimple exists.
 `app::comms` reads and writes `state::axis` and nothing else. Removing CAN means
 deleting `comms::readFieldbus()`'s body and leaving the console as the only
 master.
