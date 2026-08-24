@@ -53,13 +53,23 @@ bool hallCalibrate() {
     motor.setPhaseVoltage(Uq, 0.0f, theta);
     delayMicroseconds(500);
 
+    // `prev` RESYNCS on every valid read, and is never left holding an invalid
+    // one. It used to be updated only inside the transition test, which also
+    // required prev to be valid - so a single invalid sector (hall state 000 or
+    // 111) latched prev at -1 permanently, and from then on no transition was
+    // ever counted, seq_up/seq_down stayed 0, and dir silently defaulted to +1
+    // whatever the rotor did. A board that starts the spin on an invalid state
+    // never had working direction detection at all.
     int8_t s = sensor.electric_sector;                 // live (ISR)
-    if (s < 0 || s > 5) bad_sector++;
-    if (s != prev && s >= 0 && s <= 5 && prev >= 0 && prev <= 5) {
-      int d = s - prev;                                // sector progression direction
-      if (d == 1 || d == -5)      seq_up++;
-      else if (d == -1 || d == 5) seq_down++;
-      transitions++;
+    if (s < 0 || s > 5) {
+      bad_sector++;
+    } else {
+      if (prev >= 0 && prev <= 5 && s != prev) {
+        int d = s - prev;                              // sector progression direction
+        if (d == 1 || d == -5)      seq_up++;
+        else if (d == -1 || d == 5) seq_down++;
+        transitions++;
+      }
       prev = s;
     }
 
