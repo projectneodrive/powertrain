@@ -175,6 +175,13 @@
 // firmware's own accepted-velocity ceiling so the joystick can never ask for a
 // setpoint the board would reject or wind its integrator up against.
 #define POT_VEL_MAX_RAD_S    (CFG_VEL_LIMIT < CFG_VEL_CMD_MAX ? CFG_VEL_LIMIT : CFG_VEL_CMD_MAX)
+// Samples averaged on every poll. A BARE analogRead on an ESP32 ADC1 pin
+// wanders by tens of counts, which is more than POT_CHANGE_DEADBAND below - so
+// a single read at rest crosses the deadband on noise alone and manufactures
+// joystick movement that never happened. Note POT_CAL_MAX_SPREAD (40): this
+// file already states that ~40 counts of jitter is normal for a pot at rest.
+// 8 reads is ~1 ms, against a 100 ms poll period.
+#define POT_POLL_SAMPLES     8
 #define POT_CHANGE_DEADBAND  10     // ignore ADC deltas smaller than this (noise)
 #define POT_REST_DEADBAND_ADC 100   // +/- window around rest that snaps to 0 rad/s
 

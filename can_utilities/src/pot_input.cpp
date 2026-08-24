@@ -101,7 +101,11 @@ bool Joystick::poll(uint32_t now_ms, float& vel_rad_s) {
   }
   _last_poll = now_ms;
 
-  const int adc   = analogRead(POT_PIN);
+  // Averaged, not a single read - see POT_POLL_SAMPLES. measure() has always
+  // averaged; poll() reading once was the inconsistency.
+  long sum = 0;
+  for (int i = 0; i < POT_POLL_SAMPLES; i++) sum += analogRead(POT_PIN);
+  const int adc   = (int)(sum / POT_POLL_SAMPLES);
   const int delta = abs(adc - _adc_last);
 
   // Always track the latest reading, even on ticks we do not act on, and NEVER
@@ -118,13 +122,29 @@ bool Joystick::poll(uint32_t now_ms, float& vel_rad_s) {
 
   if (!_initialised) {
     _initialised = true;
+    _vel_last    = potToVelocity(adc, _adc_rest);
     return false;
   }
   if (delta < POT_CHANGE_DEADBAND) {
     return false;   // ADC noise, not an operator input
   }
 
-  vel_rad_s = potToVelocity(adc, _adc_rest);
+  // The pot commands a VELOCITY, not an ADC count, so report only when that
+  // velocity changes. A reading wobbling anywhere inside POT_REST_DEADBAND_ADC
+  // still means exactly "zero", and re-sending zero is NOT harmless: the board
+  // accepts setpoints from this bus AND from its own USB console with no
+  // arbitration between them - last writer wins. A redundant frame therefore
+  // cancels whatever the operator just typed on the console.
+  //
+  // Observed on the bench as "it stops for no reason after a moment": every
+  // V command typed on the board's console was zeroed a few hundred ms later
+  // by a pot that had not been touched.
+  const float vel = potToVelocity(adc, _adc_rest);
+  if (vel == _vel_last) {
+    return false;   // same command as last time - nothing to say
+  }
+  _vel_last = vel;
+  vel_rad_s = vel;
   return true;
 }
 
@@ -146,6 +166,9 @@ RestMeasurement Joystick::calibrateRest() {
   // The pot has not moved, but the reference it is measured against just did:
   // without this the next poll() reads the same jump as an operator input.
   _adc_last   = m.adc;
+  // Same reasoning for the command: this reading IS the new rest, so the
+  // velocity it maps to is zero, and that is what poll() must now compare to.
+  _vel_last   = 0.0f;
   return m;
 }
 

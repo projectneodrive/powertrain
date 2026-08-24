@@ -47,7 +47,9 @@ class Joystick {
   RestMeasurement begin();
 
   // Sample at POT_POLL_MS. Returns true, with `vel_rad_s` filled in, only when
-  // the reading moved enough to be worth a CAN frame.
+  // the pot commands a velocity DIFFERENT from the one last returned - not
+  // merely when the ADC reading moved. See the .cpp for why that distinction
+  // is the difference between a working bench and a motor that stops by itself.
   bool poll(uint32_t now_ms, float& vel_rad_s);
 
   // Re-measure at runtime (serial 'Z'). Uses the same averaging as begin(), but
@@ -68,6 +70,7 @@ class Joystick {
 
   int      _adc_rest    = POT_ADC_REST_DEFAULT;
   int      _adc_last    = 0;
+  float    _vel_last    = 0.0f;    // last velocity actually handed to the caller
   uint32_t _last_poll   = 0;
   bool     _initialised = false;   // first sample only seeds _adc_last
   bool     _calibrated  = false;   // rest point was measured, not assumed

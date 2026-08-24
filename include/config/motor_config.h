@@ -40,7 +40,7 @@
 #define CFG_PWM_FREQ_HZ    20000    // 20 kHz (matches FOC tick; keeps sense window sane)
 #define CFG_VOLT_LIMIT     23.5f    // motor/driver voltage limit (safety)
 #define CFG_VOLT_ALIGN     2.0f     // voltage used during initFOC alignment
-#define CFG_CURRENT_LIMIT  3.0f     // A (used once current sensing is enabled)
+#define CFG_CURRENT_LIMIT  4.0f     // A (used once current sensing is enabled)
 #define CFG_VEL_LIMIT      17.78f   // rad/s
 
 // Hard safety ceilings for the runtime serial settings ('LC'/'LV' from the
@@ -224,7 +224,7 @@
 // 84c3946), and it made the motor rough at low speed for every build after it:
 // Iq tracked the velocity CHANGE rather than the velocity ERROR. If you raise
 // it, check that correlation before believing the result.
-#define CFG_VEL_D        0.0001f
+#define CFG_VEL_D        0.00001f
 // Max slope of the PID's output CURRENT (A/s). A wide ramp also speeds up the
 // torque reversal when braking -> a faster bus voltage spike.
 #define CFG_VEL_RAMP     30.0f      // PID output ramp (A/s)
