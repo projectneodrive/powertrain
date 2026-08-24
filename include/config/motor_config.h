@@ -40,7 +40,7 @@
 #define CFG_PWM_FREQ_HZ    20000    // 20 kHz (matches FOC tick; keeps sense window sane)
 #define CFG_VOLT_LIMIT     23.5f    // motor/driver voltage limit (safety)
 #define CFG_VOLT_ALIGN     2.0f     // voltage used during initFOC alignment
-#define CFG_CURRENT_LIMIT  4.0f     // A (used once current sensing is enabled)
+#define CFG_CURRENT_LIMIT  3.0f     // A (used once current sensing is enabled)
 #define CFG_VEL_LIMIT      17.78f   // rad/s
 
 // Hard safety ceilings for the runtime serial settings ('LC'/'LV' from the
@@ -213,7 +213,18 @@
 // D differentiates the hall noise straight into Iq -> keep it very low (the
 // multi-edge smoothing in HallSensorSmoothVel already treats that noise at the
 // source).
-#define CFG_VEL_D        0.001f
+//
+// /!\ SimpleFOC computes the D term as D*(error - error_prev)/dt with dt = 1 ms
+// (the motion rate), so the EFFECTIVE gain on a sample-to-sample velocity change
+// is D/dt: 0.0001 here means 0.1 A per rad/s of change. At low speed the hall
+// velocity is quantisation-dominated -- at 1 rad/s only ~1.2 hall edges fall
+// inside CFG_HALL_VEL_WINDOW -- so the estimate updates in STEPS, and every step
+// is differentiated into a current spike. Ten times this value was carried in by
+// a transcription slip when board_config.h was split into config/ (commit
+// 84c3946), and it made the motor rough at low speed for every build after it:
+// Iq tracked the velocity CHANGE rather than the velocity ERROR. If you raise
+// it, check that correlation before believing the result.
+#define CFG_VEL_D        0.0001f
 // Max slope of the PID's output CURRENT (A/s). A wide ramp also speeds up the
 // torque reversal when braking -> a faster bus voltage spike.
 #define CFG_VEL_RAMP     30.0f      // PID output ramp (A/s)
@@ -224,7 +235,7 @@
 // arrival (~5 Hz ringing) which regenerates and makes the brake flicker = a
 // stutter. 10 = 0->10 rad/s in ~1 s. Lower it (6-8) if arrival still stutters,
 // raise it for a livelier response. 0 = direct step.
-#define CFG_VEL_ACCEL    10.0f      // rad/s²  (0 = no setpoint ramp)
+#define CFG_VEL_ACCEL    20.0f      // rad/s²  (0 = no setpoint ramp)
 #define CFG_POS_P        1.0f       // position P gain ((rad/s)/rad)
 #define CFG_POS_I        0.0f       // position I gain (tunable via PI; usually 0)
 #define CFG_POS_D        0.0f       // position D gain (tunable via PD; usually 0)
