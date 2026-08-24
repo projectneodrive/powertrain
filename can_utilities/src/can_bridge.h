@@ -27,8 +27,7 @@
 #include "bridge_console.h"
 #include "bridge_state.h"
 #include "bridge_telemetry.h"
-#include "can_diag.h"
-#include "cansimple.h"
+#include "cansimple.h"    // the link + its bus diagnostics (candiag::)
 #include "pot_input.h"
 
 namespace bridge {

@@ -41,6 +41,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "axis_io.h"        // the enums, generated from axis_vocab.h
 #include "bridge_config.h"
 
 namespace logx {
@@ -116,3 +117,29 @@ class OnChange {
 };
 
 }  // namespace logx
+
+// ============================================================================
+//  Axis numbers, as words.
+//
+//  Generated from ../include/axis_vocab.h, the firmware's own table, so a line
+//  reads
+//
+//      log I AXIS state IDLE -> CLOSED_LOOP
+//      log E AXIS error 0x0 -> 0x140 [MOTOR_FAILED|ENCODER_FAILED]
+//
+//  rather than leaving the reader to look 0x140 up in a header. Adding an error
+//  bit to that table names it here, in the firmware, and on the GUI's CAN
+//  Devices page at once. It lives beside the logger because it exists for the
+//  same reason: turning machine values into something an operator can read.
+// ============================================================================
+namespace axisnames {
+
+const char* state(uint8_t axis_state);
+const char* mode(uint8_t control_mode);
+
+// Decode an error word into "[A|B|C]" (or "none") in `buf`. Unknown bits are
+// reported as "+0xNNN" rather than dropped: a bit this build has no name for is
+// precisely the one worth knowing about.
+void errors(uint32_t err, char* buf, size_t len);
+
+}  // namespace axisnames

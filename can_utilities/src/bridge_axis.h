@@ -19,10 +19,9 @@
 #pragma once
 
 #include <Arduino.h>
-#include "axis_names.h"
+#include "log.h"          // logging + the axis vocabulary (axisnames::)
 #include "bridge_state.h"
 #include "cansimple.h"
-#include "log.h"
 
 namespace bridge {
 

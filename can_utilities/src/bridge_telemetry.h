@@ -24,8 +24,7 @@
 #include <Arduino.h>
 #include "bridge_axis.h"
 #include "bridge_state.h"
-#include "can_diag.h"
-#include "cansimple.h"
+#include "cansimple.h"    // the link + its bus diagnostics (candiag::)
 
 namespace bridge {
 

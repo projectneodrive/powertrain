@@ -79,35 +79,17 @@ void cmdIdle(float) {
   ack("I", g_ctx.axis->idle(), "idle");
 }
 
-void cmdVelocity(float v) {
-  const float old = g_ctx.state->c.input_vel;
-  if (g_ctx.axis->setControllerMode(odcan::CTRL_VELOCITY, INPUT_PASSTHROUGH) &&
-      g_ctx.axis->setVelocity(v)) {
-    ackFloat("V", "vel", old, v, 2, "rad/s");
-  } else {
-    ackTxFail("V");
-  }
-}
+// The three setpoints differ only in the control mode they select, the setter
+// they call and how the ack reads. Each sends TWO frames — Set_Controller_Mode
+// then the setpoint — because the board will not act on a setpoint for a mode
+// it is not in, and this station cannot read back which mode that is.
+#define SETPOINT(fn, tag, mode, setter, field, name, prec, unit)              void fn(float v) {                                                           const float old = g_ctx.state->c.field;                                    if (g_ctx.axis->setControllerMode(odcan::mode, INPUT_PASSTHROUGH) &&           g_ctx.axis->setter(v))                                                   ackFloat(tag, name, old, v, prec, unit);                                 else                                                                         ackTxFail(tag);                                                        }
 
-void cmdTorque(float v) {
-  const float old = g_ctx.state->c.input_torque;
-  if (g_ctx.axis->setControllerMode(odcan::CTRL_TORQUE, INPUT_PASSTHROUGH) &&
-      g_ctx.axis->setTorque(v)) {
-    ackFloat("T", "torque", old, v, 2, "Nm");
-  } else {
-    ackTxFail("T");
-  }
-}
+SETPOINT(cmdVelocity, "V", CTRL_VELOCITY, setVelocity, input_vel,    "vel",    2, "rad/s")
+SETPOINT(cmdTorque,   "T", CTRL_TORQUE,   setTorque,   input_torque, "torque", 2, "Nm")
+SETPOINT(cmdPosition, "X", CTRL_POSITION, setPosition, input_pos,    "pos",    3, "rad")
 
-void cmdPosition(float v) {
-  const float old = g_ctx.state->c.input_pos;
-  if (g_ctx.axis->setControllerMode(odcan::CTRL_POSITION, INPUT_PASSTHROUGH) &&
-      g_ctx.axis->setPosition(v)) {
-    ackFloat("X", "pos", old, v, 3, "rad");
-  } else {
-    ackTxFail("X");
-  }
-}
+#undef SETPOINT
 
 void cmdCharacterise(float) {
   // The board maps Set_Axis_State(MOTOR_CALIBRATION) onto the same R/L
@@ -128,87 +110,55 @@ void cmdClearErrors(float) {
   ack("C", g_ctx.axis->clearErrors(), "clear-errors requested");
 }
 
-// ---- Velocity PID ----------------------------------------------------------
-// Set_Vel_Gains (0x01B) carries P and I in one frame and has no D field, so
-// every one of these resends the pair from the cached state.
-void cmdVelP(float v) {
-  const float old = g_ctx.state->c.vel_gain;
-  g_ctx.state->c.vel_gain = v;
-  if (g_ctx.axis->applyVelGains()) ackFloat("KP", "vel_gain", old, v, 4);
-  else                             ackTxFail("KP");
-}
+// ---- Gains and limits ------------------------------------------------------
+//  Everything below follows one shape: update the cached commanded value, push
+//  it to the board, and acknowledge with old -> new (or report that the frame
+//  never left). The cache is not a convenience — CANSimple has no configuration
+//  read-back, and several of these frames carry a PAIR of values (Set_Vel_Gains
+//  is P and I together, Set_Limits is velocity and current together), so the
+//  other half has to come from somewhere.
+//
+//  `clamp` is an expression in terms of v, applied before the value is stored.
+// ---------------------------------------------------------------------------
+#define SET_AND_APPLY(fn, tag, field, name, prec, unit, clamp, apply)        void fn(float v) {                                                           const float old = g_ctx.state->c.field;                                    g_ctx.state->c.field = (clamp);                                            if (g_ctx.axis->apply())                                                     ackFloat(tag, name, old, g_ctx.state->c.field, prec, unit);              else                                                                         ackTxFail(tag);                                                        }
 
-void cmdVelI(float v) {
-  const float old = g_ctx.state->c.vel_int_gain;
-  g_ctx.state->c.vel_int_gain = v;
-  if (g_ctx.axis->applyVelGains()) ackFloat("KI", "vel_int_gain", old, v, 4);
-  else                             ackTxFail("KI");
-}
+// The answer for everything the board can do but CANSimple cannot express.
+#define NOT_OVER_CAN(fn, tag, what) void fn(float) { notOverCan(tag, what); }
 
-void cmdVelD(float) {
-  notOverCan("KD", "the velocity PID's D term");
-}
+// Set_Vel_Gains (0x01B) carries P and I in one frame and has no D field.
+SET_AND_APPLY(cmdVelP, "KP", vel_gain,     "vel_gain",     4, nullptr, v, applyVelGains)
+SET_AND_APPLY(cmdVelI, "KI", vel_int_gain, "vel_int_gain", 4, nullptr, v, applyVelGains)
+NOT_OVER_CAN (cmdVelD, "KD", "the velocity PID's D term")
+void cmdVelReapply(float) { ack("K", g_ctx.axis->applyVelGains(), "reapply vel gains"); }
 
-void cmdVelReapply(float) {
-  ack("K", g_ctx.axis->applyVelGains(), "reapply vel gains");
-}
-
-// ---- Current PID -----------------------------------------------------------
 // No CANSimple command touches the current loop at all.
-void cmdCurP(float)       { notOverCan("JP", "the current PID"); }
-void cmdCurI(float)       { notOverCan("JI", "the current PID"); }
-void cmdCurD(float)       { notOverCan("JD", "the current PID"); }
-void cmdCurReapply(float) { notOverCan("J",  "the current PID"); }
+NOT_OVER_CAN(cmdCurP,       "JP", "the current PID")
+NOT_OVER_CAN(cmdCurI,       "JI", "the current PID")
+NOT_OVER_CAN(cmdCurD,       "JD", "the current PID")
+NOT_OVER_CAN(cmdCurReapply, "J",  "the current PID")
 
-// ---- Position PID ----------------------------------------------------------
-// Set_Pos_Gain (0x01A) carries the P term only.
-void cmdPosP(float v) {
-  const float old = g_ctx.state->c.pos_gain;
-  g_ctx.state->c.pos_gain = (v > 0.0f) ? v : 0.0f;
-  if (g_ctx.axis->applyPosGain()) ackFloat("PP", "pos_p", old, g_ctx.state->c.pos_gain, 4);
-  else                            ackTxFail("PP");
-}
+// Set_Pos_Gain (0x01A) carries the P term only. A negative position gain
+// inverts the feedback sign, so it is clamped at zero — as the firmware does.
+SET_AND_APPLY(cmdPosP, "PP", pos_gain, "pos_p", 4, nullptr,
+              (v > 0.0f) ? v : 0.0f, applyPosGain)
+NOT_OVER_CAN (cmdPosI, "PI", "the position PID's I term")
+NOT_OVER_CAN (cmdPosD, "PD", "the position PID's D term")
+void cmdPosReapply(float) { ack("P", g_ctx.axis->applyPosGain(), "reapply position gain"); }
 
-void cmdPosI(float) { notOverCan("PI", "the position PID's I term"); }
-void cmdPosD(float) { notOverCan("PD", "the position PID's D term"); }
-
-void cmdPosReapply(float) {
-  ack("P", g_ctx.axis->applyPosGain(), "reapply position gain");
-}
-
-// ---- Runtime limits --------------------------------------------------------
-// Clamped to the same hard ceilings the firmware clamps to — from the same
+// Clamped to the same hard ceilings the firmware clamps to, from the same
 // header, so a remote client cannot request a dangerous value at either end.
-// Set_Limits carries velocity AND current together, hence the cached pair.
-void cmdLimitCurrent(float v) {
-  const float old = g_ctx.state->c.current_limit;
-  g_ctx.state->c.current_limit = constrain(v, 0.0f, (float)CFG_CURRENT_LIMIT_MAX);
-  if (g_ctx.axis->applyLimits())
-    ackFloat("LC", "current_limit", old, g_ctx.state->c.current_limit, 2, "A");
-  else
-    ackTxFail("LC");
-}
+SET_AND_APPLY(cmdLimitCurrent, "LC", current_limit, "current_limit", 2, "A",
+              constrain(v, 0.0f, (float)CFG_CURRENT_LIMIT_MAX), applyLimits)
+SET_AND_APPLY(cmdLimitVelocity, "LV", vel_limit, "vel_limit", 2, "rad/s",
+              constrain(v, 0.0f, (float)CFG_VEL_LIMIT_MAX), applyLimits)
+SET_AND_APPLY(cmdPosGain, "G", pos_gain, "pos_gain", 4, nullptr,
+              (v > 0.0f) ? v : 0.0f, applyPosGain)
 
-void cmdLimitVelocity(float v) {
-  const float old = g_ctx.state->c.vel_limit;
-  g_ctx.state->c.vel_limit = constrain(v, 0.0f, (float)CFG_VEL_LIMIT_MAX);
-  if (g_ctx.axis->applyLimits())
-    ackFloat("LV", "vel_limit", old, g_ctx.state->c.vel_limit, 2, "rad/s");
-  else
-    ackTxFail("LV");
-}
+#undef NOT_OVER_CAN
+#undef SET_AND_APPLY
 
 void cmdLimitHelp(float) {
   Serial.println("AK L?: use LC<A> or LV<rad/s>");
-}
-
-void cmdPosGain(float v) {
-  const float old = g_ctx.state->c.pos_gain;
-  g_ctx.state->c.pos_gain = (v > 0.0f) ? v : 0.0f;
-  if (g_ctx.axis->applyPosGain())
-    ackFloat("G", "pos_gain", old, g_ctx.state->c.pos_gain, 4);
-  else
-    ackTxFail("G");
 }
 
 // ---------------------------------------------------------------------------
