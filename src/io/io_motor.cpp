@@ -2,7 +2,7 @@
 //  io_motor.cpp — see io_motor.h.
 // ============================================================================
 #include "io/io_motor.h"
-#include "io/io_gate.h"
+#include "io/io.h"
 #include "state.h"
 #include "config/tasks_config.h"
 #include "current_sense/hardware_specific/stm32/stm32_mcu.h"  // Stm32CurrentSenseParams

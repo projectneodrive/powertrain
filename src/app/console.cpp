@@ -6,10 +6,8 @@
 //  needs is a handler here and a line there.
 // ============================================================================
 #include "app.h"
-#include "io/io_console.h"
-#include "io/io_can.h"
+#include "io/io.h"
 #include "io/io_motor.h"
-#include "io/io_brake.h"
 #include "util/timers.h"
 #include "state.h"
 #include "config/motor_config.h"

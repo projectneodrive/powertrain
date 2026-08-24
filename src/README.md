@@ -67,12 +67,17 @@ millisecond.
 | [`boot.cpp`](boot.cpp) | Hardware bring-up order, the four task bodies, task creation | The only file that knows the whole system |
 | [`app.h`](app.h) | Every module's entry points, in one file | Two lines per module |
 | [`app/`](app/) | The control modules: `foc` `safety` `control` `comms` `console` `calibration` | One `.cpp` each. Owns its state as file-statics. Never creates a task, never touches a peripheral, never blocks* |
-| [`io/`](io/) | Hardware access | The **only** code allowed to touch a register, a pin or a peripheral |
-| [`state.h`](state.h) | The values modules share | Grouped by writer — see below |
+| [`io/io.h`](io/io.h) | Gate driver, brake bridge, bus ADC, CAN controller, console — one namespace each | The **only** code allowed to touch a register, a pin or a peripheral |
+| [`io/io_motor.h`](io/io_motor.h) | The SimpleFOC object graph, kept apart so only motor code pays for its includes | As above |
+| [`state.h`](state.h) | The values modules share | Grouped by writer — see below. Header-only: `inline` definitions, no `state.cpp` |
 | [`util/timers.h`](util/timers.h) | `Debounce`, `Hysteresis`, `limit` | Small, stateful, no hardware |
-| [`config/`](config/) | `rtos_hooks.cpp` (stack-overflow / malloc-failure halt), `system_clock.cpp` | Linked by symbol name; no include edge |
 
 \* `calibration` is the marked exception — see below.
+
+The two symbols the Arduino core and the FreeRTOS kernel call **by name** —
+`SystemClock_Config` and the stack-overflow / malloc-failure hooks — sit at the
+bottom of [`boot.cpp`](boot.cpp). They are the parts of bring-up somebody else
+calls, so they belong with bring-up rather than in files of their own.
 
 Configuration constants are in [`include/config/`](../include/config/):
 
@@ -210,8 +215,9 @@ declarations in the header. The arbitration ids are in
 ### A new telemetry channel
 
 One line in [`include/telemetry_schema.h`](../include/telemetry_schema.h). The
-firmware streams it and the web GUI plots it. Also give it a demo value in the
-GUI's `demosource.cpp`.
+firmware streams it, the web GUI plots it, and demo mode emits it — the demo
+line is generated from the same table, so a new channel always appears there,
+reading zero until you give it a value in `demosource.cpp`'s `kDemoValues`.
 
 > ⚠️ **Its path is load-bearing**: the GUI includes it by bare name through its
 > CMake include path. Do not move it. The `expr` column must be a valid
@@ -220,6 +226,28 @@ GUI's `demosource.cpp`.
 ⚠️ `can_utilities` also compiles it and needs one accessor per channel, so a new
 channel fails its link until somebody decides whether that value is reachable
 over CAN at all. Several are not, and say so explicitly.
+
+### A new configuration parameter
+
+One line in [`include/config_schema.h`](../include/config_schema.h) — the `cfg …`
+line the `Q` command prints:
+
+```c
+//           key       label          unit   cmd  prec  demo   fw              br
+CONFIG_PARAM(your_gain, "Your gain",  "A/V", "YG", 4,   0.5,
+             motor.your_gain,        CFG_YOUR_GAIN)
+```
+
+That one line adds the field to the board's `Q` output, gives the GUI's Motor
+Config page a row (editable if `cmd` is non-empty, read-only if it is `""`),
+feeds the PID tuner's read-back, and puts a value in demo mode.
+
+> ⚠️ It carries **two** value expressions, and each is compiled by exactly one
+> project: `fw` by the firmware, `br` by [`can_utilities`](../can_utilities/README.md).
+> Neither build will compile until it says where its value comes from — the
+> station in particular has no configuration read-back over CANSimple, so it can
+> only report what it last commanded or the constant it was built with. Say
+> which; do not guess.
 
 ### A new axis error bit
 

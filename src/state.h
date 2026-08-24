@@ -65,16 +65,19 @@ struct Requests {
   volatile bool hall_cal = false;   // set: console   consumed: control
 };
 
-extern FromFoc     foc;
-extern FromSafety  safety;
-extern FromControl control;
-extern AtBoot      at_boot;
-extern Requests    req;
+// Defined here rather than in a .cpp: `inline` gives one shared definition
+// across every translation unit that includes this header, which is all a
+// separate state.cpp was ever doing.
+inline FromFoc     foc;
+inline FromSafety  safety;
+inline FromControl control;
+inline AtBoot      at_boot;
+inline Requests    req;
 
 // The fieldbus-mapped command/telemetry block. Multi-writer BY DESIGN — the CAN
 // driver, the console and control all command the axis — which is why it is
 // deliberately not one of the structs above. Its one dangerous field has atomic
 // accessors; see axis_io.h.
-extern odcan::AxisIO axis;
+inline odcan::AxisIO axis;
 
 }  // namespace state

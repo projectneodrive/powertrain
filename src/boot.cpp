@@ -33,11 +33,8 @@
 
 #include "config/motor_config.h"
 #include "config/tasks_config.h"
-#include "io/io_brake.h"
-#include "io/io_can.h"
-#include "io/io_gate.h"
+#include "io/io.h"
 #include "io/io_motor.h"
-#include "io/io_vbus.h"
 #include "app.h"
 #include "state.h"
 
@@ -218,3 +215,74 @@ void run() {
 }
 
 }  // namespace boot
+
+// ============================================================================
+//  Two hooks the Arduino core and the FreeRTOS kernel call BY NAME. They live
+//  here, at the bottom of the file that owns bring-up, because that is what
+//  they are: the parts of bring-up somebody else calls. Each was its own file
+//  under src/config/, which said less about them than this sentence does.
+// ============================================================================
+
+// ============================================================================
+//  system_clock.cpp — ODrive clock tree: 8 MHz HSE -> 168 MHz SYSCLK.
+//
+//  Overrides the weak SystemClock_Config the Arduino core provides, which
+//  assumes a different crystal. Called by the core before setup().
+// ============================================================================
+
+extern "C" void SystemClock_Config(void) {
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  __HAL_RCC_PWR_CLK_ENABLE();
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLN = 336;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = 7;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) { while (1); }
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK |
+                                RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK) { while (1); }
+  SystemCoreClockUpdate();
+}
+
+// ============================================================================
+//  rtos_hooks.cpp — FreeRTOS failure hooks.
+//
+//  Enabled by configCHECK_FOR_STACK_OVERFLOW / configUSE_MALLOC_FAILED_HOOK in
+//  include/STM32FreeRTOSConfig.h. Both failure modes otherwise produce a silent
+//  hang with no serial output at all; these make the failure self-report, and
+//  cut the gate driver, since RTOS state can no longer be trusted to keep
+//  running PRG_FOC and PRG_SAFETY correctly.
+//
+//  /!\ The symbol names below are the ones the kernel declares in tasks.c and
+//  links against — vApplicationStackOverflowHook, NOT ...Handler. Getting that
+//  name wrong does not fail loudly: the definition simply sits there unused
+//  while the kernel looks for the real symbol.
+// ============================================================================
+
+extern "C" void vApplicationStackOverflowHook(TaskHandle_t /*xTask*/, char *pcTaskName) {
+  io::brake::off();
+  io::gate::disable();
+  Serial.print("\n[FATAL] Stack overflow in task \"");
+  Serial.print(pcTaskName);
+  Serial.println("\" -- halting. Increase its STACK_* in config/tasks_config.h.");
+  Serial.flush();
+  for (;;) {}
+}
+
+extern "C" void vApplicationMallocFailedHook(void) {
+  io::brake::off();
+  io::gate::disable();
+  Serial.println("\n[FATAL] FreeRTOS heap allocation failed (configTOTAL_HEAP_SIZE exhausted) -- halting.");
+  Serial.flush();
+  for (;;) {}
+}

@@ -10,8 +10,7 @@
 
 #include "config/motor_config.h"
 #include "config/tasks_config.h"
-#include "io/io_brake.h"
-#include "io/io_gate.h"
+#include "io/io.h"
 #include "io/io_motor.h"
 #include "state.h"
 #include "util/timers.h"

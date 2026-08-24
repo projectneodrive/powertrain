@@ -7,7 +7,7 @@
 // ============================================================================
 #include "app.h"
 
-#include "io/io_can.h"
+#include "io/io.h"
 #include "io/io_motor.h"
 #include "state.h"
 
