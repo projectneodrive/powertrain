@@ -37,17 +37,44 @@ bool hallCalibrate() {
   const float theta_end = (float)revs * _2PI;
   int8_t prev = sensor.electric_sector;
 
+  // Evidence, so a failure says WHICH thing went wrong instead of guessing at
+  // the two most likely. "Sector rarely seen" has two very different causes -
+  // a rotor that never turned, and halls that are not being read - and they
+  // need opposite fixes.
+  int   transitions = 0;                        // sector changes observed
+  int   bad_sector  = 0;                        // reads outside 0..5
+  // getAngle() is the multi-turn mechanical angle; full_rotations itself is
+  // protected in Sensor, and this is what it is for.
+  const float mech_start = sensor.getAngle();
+  uint32_t next_report = 2000;                  // ms
+
   while (theta < theta_end) {
     theta += dtheta;
     motor.setPhaseVoltage(Uq, 0.0f, theta);
     delayMicroseconds(500);
 
     int8_t s = sensor.electric_sector;                 // live (ISR)
+    if (s < 0 || s > 5) bad_sector++;
     if (s != prev && s >= 0 && s <= 5 && prev >= 0 && prev <= 5) {
       int d = s - prev;                                // sector progression direction
       if (d == 1 || d == -5)      seq_up++;
       else if (d == -1 || d == 5) seq_down++;
+      transitions++;
       prev = s;
+    }
+
+    // A short progress line every 2 s. Kept short and rare on purpose: this
+    // task is below the FOC task so a print cannot starve commutation, but it
+    // does pause the theta sweep, and a long pause lets the rotor slip.
+    if (millis() >= next_report) {
+      next_report += 2000;
+      Serial.print("  ... elec rev "); Serial.print(theta / _2PI, 1);
+      Serial.print("/");               Serial.print(revs);
+      Serial.print("  sector=");       Serial.print(s);
+      Serial.print("  transitions=");  Serial.print(transitions);
+      Serial.print("  mech=");
+      Serial.print(sensor.getAngle() - mech_start, 3);
+      Serial.println(" rad");
     }
     if (theta < 2.0f * _2PI) continue;                 // 2 revs to reach steady state
     if (dir == 0) dir = (seq_up >= seq_down) ? 1 : -1; // direction frozen once settled
@@ -66,11 +93,30 @@ bool hallCalibrate() {
   motor.setPhaseVoltage(0.0f, 0.0f, theta);
   motor.disable();
 
-  for (int s = 0; s < 6; s++) {
-    if (cnt[s] < 5) {
-      Serial.println("[-] Hall cal ÉCHEC : secteur peu/non vu (le moteur a-t-il tourné ? monter CFG_HALL_CAL_VOLTAGE).");
-      return false;
-    }
+  const float mech_travel = sensor.getAngle() - mech_start;
+  bool thin = false;
+  for (int s = 0; s < 6; s++) if (cnt[s] < 5) thin = true;
+
+  if (thin) {
+    Serial.println("[-] Hall cal ECHEC : un secteur au moins n'a pas ete vu.");
+    Serial.print  ("    samples/secteur :");
+    for (int s = 0; s < 6; s++) { Serial.print(" "); Serial.print(cnt[s]); }
+    Serial.println();
+    Serial.print  ("    transitions="); Serial.print(transitions);
+    Serial.print  ("  up=");            Serial.print(seq_up);
+    Serial.print  ("  down=");          Serial.print(seq_down);
+    Serial.print  ("  secteurs_invalides="); Serial.println(bad_sector);
+    Serial.print  ("    rotation mecanique mesuree = "); Serial.print(mech_travel, 3);
+    Serial.print  (" rad  (attendu ~");
+    Serial.print((float)revs * _2PI / pp, 3); Serial.println(" rad)");
+    Serial.println("    LECTURE :");
+    Serial.println("      transitions ~0 et mecanique ~0  -> le rotor n'a pas tourne :");
+    Serial.println("        monter CFG_HALL_CAL_VOLTAGE (couple), ou baisser");
+    Serial.println("        CFG_HALL_CAL_ELEC_SPEED (le rotor ne suit pas la rampe).");
+    Serial.println("      mecanique correcte mais un secteur a 0 -> un fil hall est mort :");
+    Serial.println("        verifier PB4/PB5/PC9 - la commutation marche encore sur 5 secteurs.");
+    Serial.println("      secteurs_invalides > 0 -> etat hall 000 ou 111 : cablage/alim hall.");
+    return false;
   }
 
   // Mean (circular) residual per sector, then remove the global mean.
