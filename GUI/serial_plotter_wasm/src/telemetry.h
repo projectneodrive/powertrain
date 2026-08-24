@@ -1,8 +1,10 @@
-// Fast "key=value key=value" telemetry parser, ported from the Python plotter.
-// The powertrain firmware (src/main.cpp, SerialTask) emits lines such as:
+// Fast "key=value key=value" tokeniser for every line the board and the ESP32
+// station emit:
 //   t=12345 #42 mode=1 tgt=10.00 Iq=1.23 vel=9.80 pos=3.14 Vbus=24.5 RUN
-// We only extract the numeric key=value tokens; bare words (#42, RUN, [FAULT])
-// are ignored.
+//   cfg current_limit=4.00 vel_limit=17.78 pole_pairs=26 ...
+//   can node=0 link=1 axis_err=0x140 nodes=0x0000000000000001 ...
+// Bare words (#42, RUN, [FAULT], the "cfg"/"can" prefix) carry no '=' and are
+// skipped.
 #pragma once
 
 #include <QHash>
@@ -10,105 +12,79 @@
 
 namespace telemetry {
 
-// Parse a single telemetry line into a {key -> value} map. Returns an empty
-// hash when no numeric field is found (e.g. a firmware log line).
-inline QHash<QString, double> parseLine(const QString &line)
-{
-    QHash<QString, double> fields;
-    const int n = line.size();
-    int i = 0;
-
-    while (i < n) {
-        // skip whitespace
-        while (i < n && (line[i] == QLatin1Char(' ') || line[i] == QLatin1Char('\t')))
-            ++i;
-        if (i >= n)
-            break;
-
-        // read key [A-Za-z0-9_]
-        const int keyStart = i;
-        while (i < n) {
-            const QChar c = line[i];
-            if (c.isLetterOrNumber() || c == QLatin1Char('_'))
-                ++i;
-            else
-                break;
-        }
-        if (i == keyStart) {          // not a key char -> skip one and retry
-            ++i;
-            continue;
-        }
-        const QString key = line.mid(keyStart, i - keyStart);
-
-        // expect '='
-        while (i < n && (line[i] == QLatin1Char(' ') || line[i] == QLatin1Char('\t')))
-            ++i;
-        if (i >= n || line[i] != QLatin1Char('=')) // bare word like "#42", "RUN"
-            continue;
-        ++i;
-
-        // read value up to next whitespace
-        while (i < n && (line[i] == QLatin1Char(' ') || line[i] == QLatin1Char('\t')))
-            ++i;
-        const int valStart = i;
-        while (i < n && line[i] != QLatin1Char(' ') && line[i] != QLatin1Char('\t'))
-            ++i;
-        if (i == valStart)
-            continue;
-
-        bool ok = false;
-        const double value = line.mid(valStart, i - valStart).toDouble(&ok);
-        if (ok)
-            fields.insert(key, value);
-    }
-
-    return fields;
-}
-
-// Same tokenisation, but keeping the values as TEXT.
+// The one tokeniser. Calls sink(key, value) for every "key=value" pair, both as
+// QStringView into `line` -- so nothing is allocated for a token a caller
+// decides to drop. Whitespace either side of the '=' is tolerated; the wire
+// never has any, but a hand-typed line might.
 //
-// Used for the "can ..." status line, whose fields are not all numbers: the
-// error words are hex ("axis_err=0x140") and the seen-node bitmask is 64 bits,
-// which does not survive a double. Keeping the raw token also lets the CAN
-// Devices page show a value exactly as the board wrote it, which is what an
-// operator comparing it against a datasheet actually wants.
-inline QHash<QString, QString> parseTokens(const QString &line)
+// NB: the callback is NOT named `emit`. That is a Qt keyword macro expanding to
+// nothing, so `emit(k, v)` silently becomes the comma expression `(k, v)` and
+// the tokeniser reports nothing at all.
+template <typename Sink>
+inline void forEachToken(const QString &line, Sink &&sink)
 {
-    QHash<QString, QString> fields;
     const int n = line.size();
     int i = 0;
-
-    while (i < n) {
+    const auto skipSpace = [&] {
         while (i < n && (line[i] == QLatin1Char(' ') || line[i] == QLatin1Char('\t')))
             ++i;
+    };
+
+    while (i < n) {
+        skipSpace();
         if (i >= n)
             break;
 
         const int keyStart = i;
-        while (i < n) {
-            const QChar c = line[i];
-            if (c.isLetterOrNumber() || c == QLatin1Char('_'))
-                ++i;
-            else
-                break;
-        }
-        if (i == keyStart) {
+        while (i < n && (line[i].isLetterOrNumber() || line[i] == QLatin1Char('_')))
+            ++i;
+        if (i == keyStart) {          // not a key character -- skip it and retry
             ++i;
             continue;
         }
-        const QString key = line.mid(keyStart, i - keyStart);
+        const int keyLen = i - keyStart;
 
-        if (i >= n || line[i] != QLatin1Char('=')) // bare word, e.g. the "can" prefix
+        skipSpace();
+        if (i >= n || line[i] != QLatin1Char('='))   // bare word, e.g. "#42", "RUN"
             continue;
         ++i;
+        skipSpace();
 
         const int valStart = i;
         while (i < n && line[i] != QLatin1Char(' ') && line[i] != QLatin1Char('\t'))
             ++i;
         if (i > valStart)
-            fields.insert(key, line.mid(valStart, i - valStart));
+            sink(QStringView(line).mid(keyStart, keyLen),
+                 QStringView(line).mid(valStart, i - valStart));
     }
+}
 
+// Numeric view: non-numeric values are dropped. Returns an empty hash when the
+// line holds no numeric field at all (e.g. a firmware log line), which is how
+// TelemetryHub tells telemetry from prose.
+inline QHash<QString, double> parseLine(const QString &line)
+{
+    QHash<QString, double> fields;
+    forEachToken(line, [&](QStringView key, QStringView value) {
+        bool ok = false;
+        const double v = value.toDouble(&ok);
+        if (ok)
+            fields.insert(key.toString(), v);
+    });
+    return fields;
+}
+
+// Text view, for the "can ..." status line, whose fields are not all numbers:
+// the error words are hex ("axis_err=0x140") and the seen-node bitmask is 64
+// bits, which does not survive a double. Keeping the raw token also lets the
+// CAN Devices page show a value exactly as the board wrote it, which is what an
+// operator comparing it against a datasheet actually wants.
+inline QHash<QString, QString> parseTokens(const QString &line)
+{
+    QHash<QString, QString> fields;
+    forEachToken(line, [&](QStringView key, QStringView value) {
+        fields.insert(key.toString(), value.toString());
+    });
     return fields;
 }
 

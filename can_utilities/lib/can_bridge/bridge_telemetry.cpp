@@ -61,9 +61,12 @@ bool Irgn(const State& s, float& out) {
 // fires", which is the opposite of a diagnosis.
 bool Ibrk(const State&, float&) { return false; }
 
-// Sensorless/hall blend fraction: an internal of the observer, likewise not on
-// the wire. Plug into the board's USB port to see it.
+// Sensorless/hall blend fraction and the observer's disagreement with the hall:
+// internals of the observer, likewise not on the wire. Both matter when the
+// handoff misbehaves, so this is a real reason to plug into the board's own USB
+// port rather than driving through the station.
 bool blnd(const State&, float&) { return false; }
+bool obsdV(const State&, float&) { return false; }
 
 }  // namespace channel
 

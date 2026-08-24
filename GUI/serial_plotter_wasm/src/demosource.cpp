@@ -1,4 +1,6 @@
 #include "demosource.h"
+#include "channels.h"
+#include "configparams.h"
 #include "serialbridge.h"
 
 #include <QByteArray>
@@ -7,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace {
 
@@ -46,13 +49,15 @@ void DemoSource::start()
     SerialBridge::instance().feedBytes(banner.constData(), banner.size());
 
     // A representative config dump so the Motor Config page populates in demo
-    // mode (matches reportConfig() in src/main.cpp).
-    const QByteArray cfg =
-        "cfg current_limit=4.000 vel_limit=17.780 pos_gain=1.0000 pos_i=0.0000 "
-        "pos_d=0.00000 vel_p=0.5040 vel_i=0.0504 vel_d=0.00000 cur_p=1.0000 "
-        "cur_i=50.0000 cur_d=0.00000 pole_pairs=26 kv=8.20 "
-        "kt=1.0085 phase_r=4.2093 phase_l=4890.65 vbus_nom=24.0 volt_limit=23.5\n";
-    SerialBridge::instance().feedBytes(cfg.constData(), cfg.size());
+    // mode. Built from the shared schema's demo column, so a parameter added
+    // there appears here without touching this file.
+    QString cfg = QStringLiteral("cfg");
+    for (const ParamDef &p : kConfigParams)
+        cfg += QStringLiteral(" %1=%2").arg(QLatin1String(p.key))
+                                       .arg(p.demo, 0, 'f', p.decimals);
+    cfg += QLatin1Char('\n');
+    const QByteArray cfgBytes = cfg.toUtf8();
+    SerialBridge::instance().feedBytes(cfgBytes.constData(), cfgBytes.size());
     m_timer.start();
 }
 
@@ -90,23 +95,36 @@ void DemoSource::tick()
     brk = std::max(0.0, std::min(brk, kMaxDuty));
     const double ibrk = brk * vbus / 2.0;     // CFG_BRAKE_R = 2 ohms
 
-    // Sensorless observer blend (mirrors HybridSensor): ramps 0->1 across the
-    // 5..7 rad/s crossover.
-    const double av   = std::abs(m_vel);
-    const double blnd = (av <= 5.0) ? 0.0 : (av >= 7.0 ? 1.0 : (av - 5.0) / 2.0);
+    // Sensorless observer (mirrors HybridSensor): the blend ramps 0->1 across
+    // the 5..7 rad/s crossover, and obsdV is the observer's disagreement with
+    // the hall. A healthy observer keeps obsdV inside HybridSensor's tolerance
+    // (0.5 + 0.15*|vel|); the demo stays just inside it, so the chart shows what
+    // "good" looks like when you compare it against a real capture.
+    const double av    = std::abs(m_vel);
+    const double blnd  = (av <= 5.0) ? 0.0 : (av >= 7.0 ? 1.0 : (av - 5.0) / 2.0);
+    const double obsdV = noise(0.25) + 0.02 * m_vel;
 
-    QString line = QStringLiteral("t=%1 #%2 mode=1 tgt=%3 Iq=%4 vel=%5 pos=%6 Vbus=%7 "
-                                  "Irgn=%8 Ibrk=%9 blnd=%10 RUN\n")
-                       .arg(m_ms)
-                       .arg(m_beat++)
-                       .arg(m_tgt, 0, 'f', 2)
-                       .arg(m_iq, 0, 'f', 2)
-                       .arg(m_vel, 0, 'f', 2)
-                       .arg(m_pos, 0, 'f', 2)
-                       .arg(vbus, 0, 'f', 1)
-                       .arg(irgn, 0, 'f', 2)
-                       .arg(ibrk, 0, 'f', 2)
-                       .arg(blnd, 0, 'f', 2);
+    // The channel values, by wire key. The LINE itself is generated from the
+    // shared schema below, so a channel added there always appears here -- as
+    // zero until it is given a value in this table. That is the whole reason
+    // demo mode stopped drifting from the firmware's stream.
+    const struct { const char *key; double value; } kDemoValues[] = {
+        {"tgt", m_tgt}, {"Iq", m_iq},   {"vel", m_vel},   {"pos", m_pos},
+        {"Vbus", vbus}, {"Irgn", irgn}, {"Ibrk", ibrk},
+        {"blnd", blnd}, {"obsdV", obsdV},
+    };
+
+    QString line = QStringLiteral("t=%1 #%2 mode=1").arg(m_ms).arg(m_beat++);
+    for (int ch = 0; ch < kNumChannels; ++ch) {
+        const ChannelDef &c = kChannels[ch];
+        double v = 0.0;
+        for (const auto &kv : kDemoValues) {
+            if (std::strcmp(kv.key, c.primaryKey) == 0) { v = kv.value; break; }
+        }
+        line += QStringLiteral(" %1=%2").arg(QLatin1String(c.primaryKey))
+                                        .arg(v, 0, 'f', c.decimals);
+    }
+    line += QStringLiteral(" RUN\n");
 
     // Occasional non-telemetry line, so the serial monitor pane gets exercised
     // too (the parser must route these to the log, not the plots).

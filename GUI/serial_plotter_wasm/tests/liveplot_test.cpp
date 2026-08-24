@@ -6,6 +6,8 @@
 #include "liveplot.h"
 
 #include <QApplication>
+#include <QScreen>
+#include <QGuiApplication>
 #include <QColor>
 #include <QElapsedTimer>
 #include <QImage>
@@ -69,11 +71,27 @@ int main(int argc, char **argv)
 
     std::printf("Compact layout:\n");
     // Tall enough for every channel's natural row (chart 160 + header 20 px).
-    const int tallH = 200 * kNumChannels + 100;
+    // Bounded by the SCREEN, not just by the channel count: a window manager
+    // clamps a top-level window to the physical display, so once there were
+    // more channels than fit on the tester's monitor this assertion measured
+    // the screen rather than the layout -- failing on a laptop and passing on
+    // a desktop. Hide the overflow instead, and the check still asks the
+    // question it means to: does every VISIBLE chart get its natural row?
+    const int availH = QGuiApplication::primaryScreen()->availableGeometry().height();
+    const int shown  = std::max(1, std::min(kNumChannels, (availH - 140) / 200));
+    for (int c = shown; c < kNumChannels; ++c)
+        plot.setChannelVisible(c, false);
+    const int tallH = 200 * shown + 100;
     plot.resize(800, tallH);          // tall
     plot.show();
     app.processEvents();
     check(plot.verticalScrollBar()->maximum() == 0, "all charts fit a tall viewport (no scroll)");
+    if (shown < kNumChannels)
+        std::printf("  (screen fits %d of %d charts; the rest were hidden)\n",
+                    shown, kNumChannels);
+    for (int c = shown; c < kNumChannels; ++c)
+        plot.setChannelVisible(c, true);
+    app.processEvents();
 
     plot.resize(800, 300);            // short
     app.processEvents();

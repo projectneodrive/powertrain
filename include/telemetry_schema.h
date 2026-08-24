@@ -57,5 +57,16 @@ TELEMETRY_CHANNEL(Irgn,  "Regen [A]",     "#06b6d4", "",     2,
 TELEMETRY_CHANNEL(Ibrk,  "Brake [A]",     "#eab308", "",     2,
                   (io::brake::duty() * state::axis.vbus / CFG_BRAKE_R))
 
-// Sensorless observer fraction (hall build only): 0 = pure hall, 1 = sensorless.
+// --- Sensorless observer (hall builds only) ----------------------------------
+// blnd : how much of the angle/velocity comes from the flux observer rather
+//        than the halls. 0 = pure hall, 1 = pure observer, in between = the
+//        blended handoff across [CFG_SENSORLESS_VEL_LO, ..._HI].
+// obsdV: the observer's DISAGREEMENT with the hall (v_obs - v_hall, rad/s).
+//        This is the commissioning metric: motor_config.h tells you to spin the
+//        motor with CFG_SENSORLESS_ENABLE=0 and confirm obsdV stays near zero
+//        across the whole speed range BEFORE enabling the handoff. HybridSensor
+//        gates the handoff on it too (tol = 0.5 + 0.15*|v_hall|), so a large
+//        obsdV makes `blnd` chatter between 0 and 1 — which the controller sees
+//        as step changes in measured velocity, i.e. erratic motion.
 TELEMETRY_CHANNEL_HALL(blnd,  "blend",         "#ec4899", "", 2, io::motor::hybrid.blend)
+TELEMETRY_CHANNEL_HALL(obsdV, "obs dV [rad/s]", "#14b8a6", "", 2, io::motor::hybrid.obs_dv)

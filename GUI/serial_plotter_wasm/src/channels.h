@@ -12,6 +12,7 @@ struct ChannelDef {
     const char *color;
     const char *primaryKey;
     const char *altKey;      // fallback key name, or nullptr
+    int decimals;            // as the firmware prints it; used by demo mode
 };
 
 // Both schema macros expand to a ChannelDef for the GUI: hall-only channels are
@@ -20,7 +21,7 @@ struct ChannelDef {
 // expression (last macro arg) is unused here and discarded by the preprocessor.
 inline constexpr ChannelDef kChannels[] = {
 #define TELEMETRY_CHANNEL(key, label, color, altkey, prec, expr) \
-    ChannelDef{ label, color, #key, (sizeof(altkey) > 1 ? altkey : nullptr) },
+    ChannelDef{ label, color, #key, (sizeof(altkey) > 1 ? altkey : nullptr), prec },
 #define TELEMETRY_CHANNEL_HALL TELEMETRY_CHANNEL
 #include "telemetry_schema.h"
 #undef TELEMETRY_CHANNEL_HALL
