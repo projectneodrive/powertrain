@@ -239,6 +239,20 @@ void update() {
   const char* line;
   while ((line = io::console::poll()) != nullptr) dispatch(line);
 
+  // Say what app::safety could not say itself. It runs above the FOC loop and
+  // Serial::write() busy-waits on a full TX buffer, so a print from there
+  // starves commutation - see state.h FromSafety.
+  if (state::safety.say_ov_trip) {
+    state::safety.say_ov_trip = false;
+    Serial.print("[FAULT] DC bus over-voltage: ");
+    Serial.print(state::safety.say_ov_vbus, 1);
+    Serial.println(" V");
+  }
+  if (state::safety.say_cleared) {
+    state::safety.say_cleared = false;
+    Serial.println("[OK] Erreurs reinitialisees.");
+  }
+
   Serial.print("t=");     Serial.print(millis());
   Serial.print(" #");     Serial.print(s_beat++);
   Serial.print(" mode="); Serial.print(state::axis.control_mode);

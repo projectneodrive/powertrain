@@ -41,6 +41,26 @@ struct FromSafety {
   volatile float vbus_filt      = 0.0f;              // V, median-of-3 + LPF
   volatile float regen_iq_limit = CFG_CURRENT_LIMIT; // A, max |Iq| opposing rotation
   volatile bool  fault          = false;             // latched
+
+  // Things the safety module wants SAID. It must not say them itself: it runs
+  // at PRIO_SAFETY, one priority ABOVE the FOC loop, and the Arduino core's
+  // Serial::write() BUSY-WAITS when the 64-byte TX buffer is full:
+  //
+  //     while (!availableForWrite()) { /* nop */ }
+  //
+  // A 150-byte telemetry line takes 13 ms to clear at 115200 baud, so a print
+  // from here can spin for ~7 ms while holding priority 5 - starving the 20 kHz
+  // FOC task for ~150 ticks. Commutation freezes with the stage energised, the
+  // rotor keeps turning (111 deg electrical at 10 rad/s), and the angle error
+  // on resume shows up as a current spike.
+  //
+  // So safety RAISES a flag and app::console prints it on its own 100 ms tick,
+  // at PRIO_TELEMETRY, where a spin costs nothing. Coalescing is fine for both:
+  // the OV trip is latched and only fires once, and a second clear-errors before
+  // the first is printed is the same event twice.
+  volatile bool  say_ov_trip   = false;
+  volatile float say_ov_vbus   = 0.0f;
+  volatile bool  say_cleared   = false;
 };
 
 // Writer: app::control.

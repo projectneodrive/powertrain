@@ -24,6 +24,11 @@
 //     1. chopper      dissipate into the AUX resistor      (removes energy)
 //     2. regen derate withdraw permission to brake         (adds none)
 //     3. OV trip      latched fault, gates off             (last resort)
+//
+//  /!\ NOTHING IN THIS FILE MAY PRINT. This module runs at PRIO_SAFETY, one
+//  above the FOC loop, and the Arduino core busy-waits when the serial TX
+//  buffer is full - so a print here starves commutation for milliseconds. Set a
+//  say_* flag in state::safety instead and let app::console emit it.
 // ============================================================================
 #include "app.h"
 
@@ -132,8 +137,9 @@ void runBusProtection() {
     io::gate::disable();
     state::safety.fault = true;
     state::axis.raiseError(odcan::ERR_DC_BUS_OVER_VOLTAGE);
-    Serial.print("[FAULT] DC bus over-voltage: ");
-    Serial.print(vb, 1); Serial.println(" V");
+    // Announce via app::console, never from here - see state.h FromSafety.
+    state::safety.say_ov_vbus = vb;
+    state::safety.say_ov_trip = true;
   }
 
   state::safety.regen_iq_limit = regenDerate(vb, io::motor::motor.current_limit);
@@ -157,7 +163,7 @@ void update() {
     state::safety.fault = false;
     state::axis.clearErrorBits(seen);
     state::axis.estop = false;
-    Serial.println("[OK] Erreurs reinitialisees.");
+    state::safety.say_cleared = true;   // printed by app::console, not here
   }
 
   if (++s_bus_div >= CFG_BUS_SAFETY_DIV) {
