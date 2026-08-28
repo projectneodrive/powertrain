@@ -266,4 +266,5 @@
 #define CFG_HALL_PRECALIBRATED   1       // 1 = load CFG_HALL_CAL_OFFSETS at boot
 // Mechanical offsets (rad) per hall sector 0..5, produced by 'H' (direction
 // included). Sectors 0..5 in deg elec: +0.92 -1.18 +0.46 +0.36 -1.33 +0.77.
-#define CFG_HALL_CAL_OFFSETS  { -0.0006175f, 0.0007926f, -0.0003101f, -0.0002395f, 0.0008929f, -0.0005184f }
+
+#define CFG_HALL_CAL_OFFSETS  {0.0004894f, -0.0006101f, 0.0001808f, 0.0002188f, -0.0006247f, 0.0003457f}
