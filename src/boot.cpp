@@ -89,19 +89,26 @@ void bringUpHardware() {
   // not take, so the current sense has to have claimed one first.
   io::vbus::init();
 
-  Serial.print("Brake resistor: "); Serial.print(CFG_BRAKE_R, 1);
+  // Which pack column is compiled in, then the whole ladder it produced. Worth
+  // reading BEFORE connecting a pack: the mode tag is the only way to tell a
+  // 48 V build from a 24 V one from the outside, and the peak brake wattage is
+  // what the AUX resistor has to survive.
 #if CFG_BUS_SOURCE == CFG_BUS_SOURCE_PSU
-  Serial.print(" ohm on AUX [PSU], chopper ");
+  Serial.print("[" CFG_PACK_NAME "/PSU] ");
 #else
-  Serial.print(" ohm on AUX [BATTERY], chopper ");
+  Serial.print("[" CFG_PACK_NAME "/BATTERY] ");
 #endif
+  Serial.print("bus ");               Serial.print(CFG_VBUS_NOMINAL, 1);
+  Serial.print(" V, brake resistor "); Serial.print(CFG_BRAKE_R, 1);
+  Serial.print(" ohm on AUX, chopper ");
   Serial.print(CFG_BRAKE_VBUS_OFF, 1);
   Serial.print("/");                  Serial.print(CFG_BRAKE_VBUS_ON, 1);
-  Serial.print(" V gain ");           Serial.print(CFG_BRAKE_GAIN, 2);
+  Serial.print(" V gain ");           Serial.print(CFG_BRAKE_GAIN, 3);
   Serial.print(", regen derate ");    Serial.print(CFG_VBUS_REGEN_START, 1);
   Serial.print("-");                  Serial.print(CFG_VBUS_REGEN_FULL, 1);
   Serial.print(" V, OV trip ");       Serial.print(CFG_VBUS_OV_TRIP, 1);
-  Serial.println(" V");
+  Serial.print(" V, brake peak ");    Serial.print(CFG_BRAKE_P_PEAK_W, 0);
+  Serial.println(" W");
 
   io::can::init();
 }

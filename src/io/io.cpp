@@ -143,6 +143,16 @@ void init() {
   g_timer->resume();
 }
 
+// This module owns the bootstrap constraint, so it is the one that checks it:
+// the LM5109B's C70 only recharges while the low-side FET conducts, so a duty
+// ceiling of 1.0 would starve the high-side gate drive. CFG_BRAKE_MAX_DUTY now
+// comes from the pack-voltage table in motor_config.h, where each column sets
+// it from a resistor power budget - nothing there stops a column from being
+// written above the bootstrap limit except this.
+static_assert(CFG_BRAKE_MAX_DUTY <= CFG_BRAKE_DUTY_BOOTSTRAP,
+              "CFG_BRAKE_MAX_DUTY for this CFG_PACK_VOLTAGE exceeds the LM5109B "
+              "bootstrap ceiling - the high-side driver's C70 would not recharge.");
+
 void setDuty(float d) {
   d = constrain(d, 0.0f, (float)CFG_BRAKE_MAX_DUTY);
   g_duty = d;

@@ -26,6 +26,32 @@ double noise(double amplitude)
     return (QRandomGenerator::global()->generateDouble() - 0.5) * 2.0 * amplitude;
 }
 
+// ---- DC bus / brake chopper -------------------------------------------------
+// SOURCE OF TRUTH: the CFG_PACK_VOLTAGE table in include/config/motor_config.h.
+//
+// This is a HAND-MAINTAINED COPY and it is the one place the demo can silently
+// drift from the firmware: the GUI is a desktop/WASM Qt build, its CMakeLists
+// does not put include/ on the path, and motor_config.h pulls in <Arduino.h> —
+// so the real macros cannot simply be included here.
+//
+// Mirroring the 24 V / PSU column. The derivations are the ones that table
+// documents, so setting kVbusNom to 36.0 or 48.0 tracks those columns:
+//   * the PSU ladder scales with the bus (ratio, not a fixed offset);
+//   * the duty ceiling holds peak dissipation at the ~202 W the 2 ohm resistor
+//     is sized for (P = duty * Vbus^2 / R), under the 0.7 LM5109B bootstrap cap
+//     — which is what actually binds at 24 V. (The firmware table rounds the
+//     36 V and 48 V duties down a little from this formula.)
+//   * the chopper gain is duty-per-volt and is not scale-free: the watts per
+//     volt of overshoot go as V^2, so it scales by 1/V^2.
+constexpr double kVbusNom  = 24.0;               // CFG_VBUS_NOMINAL
+constexpr double kScale    = kVbusNom / 24.0;
+constexpr double kBrakeR   = 2.0;                // CFG_BRAKE_R (ohms)
+constexpr double kBrakeOff = 24.2 * kScale;      // CFG_BRAKE_VBUS_OFF
+constexpr double kBrakeOn  = 24.6 * kScale;      // CFG_BRAKE_VBUS_ON
+constexpr double kBrakeP   = 202.0;              // W the AUX resistor is sized for
+constexpr double kMaxDuty  = std::min(0.7, kBrakeP * kBrakeR / (kVbusNom * kVbusNom));
+constexpr double kGain     = 0.1 / (kScale * kScale);   // CFG_BRAKE_GAIN
+
 } // namespace
 
 DemoSource::DemoSource(QObject *parent) : QObject(parent)
@@ -86,14 +112,13 @@ void DemoSource::tick()
 
     // Le chopper suit la même loi que brake::update() : hystérésis autour de
     // CFG_BRAKE_VBUS_ON/OFF puis gain proportionnel, plafonné à MAX_DUTY.
-    double vbus = 24.0 + 0.4 * std::sin(m_ms / 900.0) + noise(0.05);
-    vbus += irgn * 1.2;                       // la régen pousse le bus
-    constexpr double kBrakeOn = 24.6, kBrakeOff = 24.2, kGain = 0.1, kMaxDuty = 0.7;
+    double vbus = kVbusNom + 0.4 * kScale * std::sin(m_ms / 900.0) + noise(0.05);
+    vbus += irgn * 1.2 * kScale;              // la régen pousse le bus
     if (!m_brakeOn && vbus > kBrakeOn)       m_brakeOn = true;
     else if (m_brakeOn && vbus < kBrakeOff)  m_brakeOn = false;
     double brk = m_brakeOn ? (vbus - kBrakeOff) * kGain : 0.0;
     brk = std::max(0.0, std::min(brk, kMaxDuty));
-    const double ibrk = brk * vbus / 2.0;     // CFG_BRAKE_R = 2 ohms
+    const double ibrk = brk * vbus / kBrakeR;
 
     // Sensorless observer (mirrors HybridSensor): the blend ramps 0->1 across
     // the 5..7 rad/s crossover, and obsdV is the observer's disagreement with

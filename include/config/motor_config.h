@@ -5,6 +5,10 @@
 //
 //  Retune per motor. The pin map is in hw_pinout.h, the task rates in
 //  plc_config.h.
+//
+//  ONE VARIABLE SELECTS THE PACK: CFG_PACK_VOLTAGE (24/36/48 V). See the
+//  "Pack voltage" section below — it produces the bus thresholds, the voltage
+//  and velocity limits and the brake chopper tuning as one consistent set.
 // ============================================================================
 #pragma once
 #include <Arduino.h>
@@ -33,53 +37,32 @@
 #define SENSOR_TYPE SENSOR_TYPE_HALL   // hub motor -> hall sensors
 #endif
 
+// ============================================================================
+//  PACK VOLTAGE — the one variable to change when the bus changes
+// ============================================================================
+//  Change CFG_PACK_VOLTAGE (or override on the command line with
+//  -D CFG_PACK_VOLTAGE=CFG_PACK_48V) and the whole voltage-dependent set
+//  follows: CFG_VBUS_NOMINAL, CFG_VOLT_LIMIT, the velocity limits, the brake
+//  chopper duty/gain and every threshold in the DC-bus ladder.
+//
+//  /!\ THE 24 V COLUMN IS COMMISSIONED. Those numbers were measured on the
+//      bench. The 36 V and 48 V columns are COMPUTED starting points, scaled
+//      from the 24 V ladder by the derivations documented at each table — they
+//      have NOT been run against a real pack. Verify them on the bench (see
+//      docs/Calibration.md) before connecting 36 V or 48 V.
+//
+//  /!\ HARDWARE CEILING: the Vbus divider (CFG_VBUS_DIV, below) is fixed on
+//      this board, so the ADC saturates at 3.3 * 19.0 = 62.7 V. Every
+//      CFG_VBUS_OV_TRIP must stay below that or the trip can never fire — the
+//      reading pins before it is reached. src/app/safety.cpp static_asserts it.
 // ---------------------------------------------------------------------------
-//  Power / limits — conservative values for bring-up. Tighten per motor.
-// ---------------------------------------------------------------------------
-#define CFG_VBUS_NOMINAL   24.0f    // driver.voltage_power_supply
-#define CFG_PWM_FREQ_HZ    20000    // 20 kHz (matches FOC tick; keeps sense window sane)
-#define CFG_VOLT_LIMIT     23.5f    // motor/driver voltage limit (safety)
-#define CFG_VOLT_ALIGN     2.0f     // voltage used during initFOC alignment
-#define CFG_CURRENT_LIMIT  4.0f     // A (used once current sensing is enabled)
-#define CFG_VEL_LIMIT      17.78f   // rad/s
+#define CFG_PACK_24V  24
+#define CFG_PACK_36V  36
+#define CFG_PACK_48V  48
 
-// Hard safety ceilings for the runtime serial settings ('LC'/'LV' from the
-// config GUI). A remote client must NEVER be able to ask for an arbitrary
-// current/velocity: the accepted value is clamped here.
-#define CFG_CURRENT_LIMIT_MAX  20.0f   // A — hard ceiling for 'LC'
-#define CFG_VEL_LIMIT_MAX      40.0f   // rad/s — hard ceiling for 'LV'
-
-// ---------------------------------------------------------------------------
-//  Regenerated energy management (2 ohm brake resistor on AUX) + DC bus
-//  thresholds, for a 24 V nominal bus. Three stages, softest to hardest —
-//  this ordering is REQUIRED:
-//      BRAKE_VBUS_OFF < BRAKE_VBUS_ON < REGEN_START < REGEN_FULL < OV_TRIP
-//   1. chopper on the resistor (BRAKE_VBUS_ON, proportional gain)
-//   2. derating of the motor braking torque (REGEN_START -> REGEN_FULL)
-//   3. latched over-voltage fault (OV_TRIP)
-//  The ordering is what guarantees the resistor ALWAYS gets its chance before
-//  we sacrifice braking torque, and before the fault.
-// ---------------------------------------------------------------------------
-#define CFG_BRAKE_R            2.0f    // ohms, resistor across the AUX terminals
-#define CFG_BRAKE_PWM_HZ       20000   // brake PWM (TIM2) — inaudible
-// A ceiling < 1.0 is MANDATORY: the high-side FET driver (LM5109B) is
-// bootstrapped, and its C70 capacitor only recharges while the low-side FET
-// conducts. 0.7 leaves 15 us of recharge per period at 20 kHz — very generous.
-// 0.7 * 24²/2 ≈ 200 W peak into the resistor.
-#define CFG_BRAKE_MAX_DUTY     0.7f
-// Dead time between one FET turning off and the other turning on. Below the AUX
-// FETs' real switching time both conduct briefly = a hard short across the bus.
-// 500 ns is very conservative (ODrive uses ~240 ns). In center-aligned mode it
-// is honoured on BOTH edges (see io_brake.cpp).
-#define CFG_BRAKE_DEADTIME_NS  500
-
-// Call rate of the bus-safety block (see PRG_SAFETY): the Vbus measurement is a
-// blocking ADC conversion -- no point doing it at 1 kHz (nothing on a battery
-// bus moves that fast), and it avoids stealing CPU from PRG_FOC (PRG_SAFETY's
-// task is the more urgent one). The safety task runs at 1 kHz, so
-// CFG_BUS_SAFETY_HZ must stay an integer divisor of 1000.
-#define CFG_BUS_SAFETY_HZ      200
-#define CFG_BUS_SAFETY_DIV     (1000 / CFG_BUS_SAFETY_HZ)
+#ifndef CFG_PACK_VOLTAGE
+#define CFG_PACK_VOLTAGE  CFG_PACK_24V
+#endif
 
 // ---------------------------------------------------------------------------
 //  Bus power source. Changes the THRESHOLDS ONLY: the source determines whether
@@ -95,8 +78,9 @@
 //              voltage BEFORE turning the brake on: energy is recovered first,
 //              dissipated second.
 //
-//  /!\ In BATTERY mode, set BRAKE_VBUS_ON to the pack's REAL end-of-charge
-//      voltage (e.g. 6S Li-ion = 4.20 V/cell = 25.2 V). Too high = cell
+//  /!\ In BATTERY mode the thresholds are built on the pack's REAL end-of-charge
+//      voltage (cells * 4.20 V). If your pack has a different cell count or
+//      chemistry than the CFG_PACK_CELLS below, fix it there. Too high = cell
 //      overcharge.
 // ---------------------------------------------------------------------------
 #define CFG_BUS_SOURCE_PSU      1
@@ -106,40 +90,189 @@
 #define CFG_BUS_SOURCE  CFG_BUS_SOURCE_PSU
 #endif
 
-#if CFG_BUS_SOURCE == CFG_BUS_SOURCE_PSU
-  // Bus measured in operation: 23.5 V (accelerating) to 24.2 V (peak).
-  // BRAKE_VBUS_ON must stay above 24.2 so it does not modulate in normal use,
-  // and as low as possible so it dissipates before things climb.
-  #define CFG_BRAKE_VBUS_ON      24.6f   // V — the chopper engages
-  #define CFG_BRAKE_VBUS_OFF     24.2f   // V — it disengages (hysteresis)
-  // Braking-torque derate: a safety net only. If the resistor is enough, we
-  // never get here.
-  #define CFG_VBUS_REGEN_START   26.5f   // V — derate begins
-  #define CFG_VBUS_REGEN_FULL    27.5f   // V — braking torque fully cut
-#elif CFG_BUS_SOURCE == CFG_BUS_SOURCE_BATTERY
-  // 6S Li-ion: 25.2 V for a full pack. Below that, regen recharges the pack and
-  // the brake must stay off — otherwise we burn energy we could recover.
-  #define CFG_BRAKE_VBUS_ON      25.8f   // V — pack full, nothing left to absorb
-  #define CFG_BRAKE_VBUS_OFF     25.4f   // V
-  #define CFG_VBUS_REGEN_START   27.0f   // V
-  #define CFG_VBUS_REGEN_FULL    28.0f   // V
+// Vbus ADC divider ratio — a fixed resistor pair on the board, identical for
+// every pack voltage. Verify it against YOUR board: every threshold below is
+// compared against a reading scaled by this number, so an error here moves the
+// entire ladder. Full scale = 3.3 V * CFG_VBUS_DIV = 62.7 V.
+#define CFG_VBUS_DIV      19.0f
+
+// ---------------------------------------------------------------------------
+//  The table. Outer branch = pack voltage, inner = bus source.
+//
+//  DERIVATIONS (so a future editor can re-derive rather than guess):
+//
+//   * PSU thresholds are the commissioned 24 V ladder scaled by the voltage
+//     ratio (x1.5, x2.0). Bus ripple and regen overshoot scale WITH the bus,
+//     so a ratio is right here and a fixed offset would not be.
+//
+//   * BATTERY thresholds keep the 24 V rule: the chopper stays off until the
+//     pack is at its real end-of-charge voltage (CFG_PACK_CELLS * 4.20), so
+//     regen recharges the pack before any energy is burned.
+//
+//   * CFG_BRAKE_MAX_DUTY holds peak dissipation at the ~200 W the 2 ohm AUX
+//     resistor is sized for, instead of a fixed 0.7. P_peak = duty * Vbus^2/R,
+//     so the 24 V value of 0.7 (202 W) would be 806 W at 48 V — four times the
+//     resistor's job. Solve duty = 200 * R / Vbus^2. The 0.7 bootstrap ceiling
+//     (see CFG_BRAKE_R below) still applies on top, and binds only at 24 V.
+//
+//   * CFG_BRAKE_GAIN is duty-per-volt and is NOT scale-free: the watts
+//     delivered per volt of overshoot go as V^2. Scaling by 1/V^2 keeps the
+//     resistor's response to a given overshoot constant (~29 W per volt in
+//     every column). This is the most bench-tunable number in the table.
+//
+//   * The velocity limits scale with CFG_VOLT_LIMIT because no-load speed does.
+//     CFG_VEL_CMD_MAX (further down) is already derived and follows on its own.
+//
+//  THE LADDER ORDERING IS REQUIRED, in every column:
+//      BRAKE_VBUS_OFF < BRAKE_VBUS_ON < REGEN_START < REGEN_FULL < OV_TRIP
+//   1. chopper on the resistor (BRAKE_VBUS_ON, proportional gain)
+//   2. derating of the motor braking torque (REGEN_START -> REGEN_FULL)
+//   3. latched over-voltage fault (OV_TRIP)
+//  The ordering is what guarantees the resistor ALWAYS gets its chance before
+//  we sacrifice braking torque, and before the fault. src/app/safety.cpp
+//  static_asserts it — a mis-edited column fails the build, not the bench.
+// ---------------------------------------------------------------------------
+#if CFG_PACK_VOLTAGE == CFG_PACK_24V
+  #define CFG_PACK_NAME        "24V"
+  #define CFG_PACK_CELLS       6         // 6S Li-ion -> 25.2 V full
+  #define CFG_VBUS_NOMINAL     24.0f
+  #define CFG_VOLT_LIMIT       23.5f
+  #define CFG_VEL_LIMIT        17.78f    // rad/s
+  #define CFG_VEL_LIMIT_MAX    40.0f     // rad/s — hard ceiling for 'LV'
+  #define CFG_BRAKE_MAX_DUTY   0.7f      // 202 W peak; bootstrap-limited here
+  #define CFG_BRAKE_GAIN       0.1f      // duty/V -> ~29 W per volt of overshoot
+  #if CFG_BUS_SOURCE == CFG_BUS_SOURCE_PSU
+    // Bus measured in operation: 23.5 V (accelerating) to 24.2 V (peak).
+    // BRAKE_VBUS_ON must stay above 24.2 so it does not modulate in normal use,
+    // and as low as possible so it dissipates before things climb.
+    #define CFG_BRAKE_VBUS_OFF   24.2f   // V — the chopper disengages (hysteresis)
+    #define CFG_BRAKE_VBUS_ON    24.6f   // V — it engages
+    // Braking-torque derate: a safety net only. If the resistor is enough, we
+    // never get here.
+    #define CFG_VBUS_REGEN_START 26.5f   // V — derate begins
+    #define CFG_VBUS_REGEN_FULL  27.5f   // V — braking torque fully cut
+    #define CFG_VBUS_OV_TRIP     29.0f   // V — latched fault (~10 ms consecutive)
+  #else
+    // 6S Li-ion: 25.2 V for a full pack. Below that, regen recharges the pack
+    // and the brake must stay off — otherwise we burn energy we could recover.
+    #define CFG_BRAKE_VBUS_OFF   25.4f
+    #define CFG_BRAKE_VBUS_ON    25.8f   // pack full, nothing left to absorb
+    #define CFG_VBUS_REGEN_START 27.0f
+    #define CFG_VBUS_REGEN_FULL  28.0f
+    #define CFG_VBUS_OV_TRIP     29.0f
+  #endif
+
+#elif CFG_PACK_VOLTAGE == CFG_PACK_36V
+  #define CFG_PACK_NAME        "36V"
+  #define CFG_PACK_CELLS       10        // 10S Li-ion -> 42.0 V full
+  #define CFG_VBUS_NOMINAL     36.0f
+  #define CFG_VOLT_LIMIT       35.0f
+  #define CFG_VEL_LIMIT        26.7f
+  #define CFG_VEL_LIMIT_MAX    60.0f
+  #define CFG_BRAKE_MAX_DUTY   0.30f     // 194 W peak into 2 ohm
+  #define CFG_BRAKE_GAIN       0.044f    // ~29 W per volt of overshoot
+  #if CFG_BUS_SOURCE == CFG_BUS_SOURCE_PSU
+    #define CFG_BRAKE_VBUS_OFF   36.3f
+    #define CFG_BRAKE_VBUS_ON    36.9f
+    #define CFG_VBUS_REGEN_START 39.8f
+    #define CFG_VBUS_REGEN_FULL  41.3f
+    #define CFG_VBUS_OV_TRIP     43.5f
+  #else
+    // 10S Li-ion: 42.0 V for a full pack.
+    #define CFG_BRAKE_VBUS_OFF   42.3f
+    #define CFG_BRAKE_VBUS_ON    43.0f
+    #define CFG_VBUS_REGEN_START 45.0f
+    #define CFG_VBUS_REGEN_FULL  46.7f
+    #define CFG_VBUS_OV_TRIP     48.3f
+  #endif
+
+#elif CFG_PACK_VOLTAGE == CFG_PACK_48V
+  #define CFG_PACK_NAME        "48V"
+  #define CFG_PACK_CELLS       13        // 13S Li-ion -> 54.6 V full
+  #define CFG_VBUS_NOMINAL     48.0f
+  #define CFG_VOLT_LIMIT       47.0f
+  #define CFG_VEL_LIMIT        35.6f
+  #define CFG_VEL_LIMIT_MAX    80.0f
+  #define CFG_BRAKE_MAX_DUTY   0.17f     // 196 W peak into 2 ohm
+  #define CFG_BRAKE_GAIN       0.025f    // ~29 W per volt of overshoot
+  #if CFG_BUS_SOURCE == CFG_BUS_SOURCE_PSU
+    #define CFG_BRAKE_VBUS_OFF   48.4f
+    #define CFG_BRAKE_VBUS_ON    49.2f
+    #define CFG_VBUS_REGEN_START 53.0f
+    #define CFG_VBUS_REGEN_FULL  55.0f
+    #define CFG_VBUS_OV_TRIP     58.0f
+  #else
+    // 13S Li-ion: 54.6 V for a full pack. /!\ The tightest column: OV_TRIP at
+    // 60.5 V leaves only ~3.5 % of headroom under the 62.7 V ADC full scale, so
+    // a CFG_VBUS_DIV error that was invisible at 24 V becomes a trip that
+    // cannot fire. Measure the divider against a meter before running this one.
+    #define CFG_BRAKE_VBUS_OFF   55.0f
+    #define CFG_BRAKE_VBUS_ON    55.8f
+    #define CFG_VBUS_REGEN_START 57.5f
+    #define CFG_VBUS_REGEN_FULL  59.0f
+    #define CFG_VBUS_OV_TRIP     60.5f
+  #endif
+
 #else
+  #error "CFG_PACK_VOLTAGE must be CFG_PACK_24V, CFG_PACK_36V or CFG_PACK_48V"
+#endif
+
+#if CFG_BUS_SOURCE != CFG_BUS_SOURCE_PSU && CFG_BUS_SOURCE != CFG_BUS_SOURCE_BATTERY
   #error "CFG_BUS_SOURCE must be CFG_BUS_SOURCE_PSU or CFG_BUS_SOURCE_BATTERY"
 #endif
 
-// Chopper gain (duty per volt above BRAKE_VBUS_OFF). 0.1/V -> at 1 V of
-// overshoot, duty 0.10 = 0.10 * 24²/2 ≈ 29 W dissipated. Measured on the bench:
-// the bus capacitance (~1400 uF) climbs from 24 to 28.5 V on only ~0.4 W of
-// regen, so a few tens of watts is plenty to hold the bus. Raise the gain if
-// the bus still exceeds BRAKE_VBUS_ON + 2 V.
-#define CFG_BRAKE_GAIN         0.1f
+// ---------------------------------------------------------------------------
+//  Power / limits — conservative values for bring-up. Tighten per motor.
+//  The voltage-dependent ones live in the pack table above.
+// ---------------------------------------------------------------------------
+#define CFG_PWM_FREQ_HZ    20000    // 20 kHz (matches FOC tick; keeps sense window sane)
+// /!\ DOES NOT SCALE WITH THE PACK. This is an open-loop drive voltage: it sets
+// a CURRENT through CFG_PHASE_R (~4.2 ohm), so 2.0 V is ~0.5 A whatever the bus
+// is. Scaling it to 48 V would put ~11 A through the windings.
+#define CFG_VOLT_ALIGN     2.0f     // voltage used during initFOC alignment
+#define CFG_CURRENT_LIMIT  4.0f     // A (used once current sensing is enabled)
 
-#define CFG_VBUS_OV_TRIP       29.0f   // V — latched fault (~10 ms consecutive)
+// Hard safety ceilings for the runtime serial settings ('LC'/'LV' from the
+// config GUI). A remote client must NEVER be able to ask for an arbitrary
+// current/velocity: the accepted value is clamped here. (CFG_VEL_LIMIT_MAX is
+// in the pack table — it scales; the current ceiling does not.)
+#define CFG_CURRENT_LIMIT_MAX  20.0f   // A — hard ceiling for 'LC'
+
+// ---------------------------------------------------------------------------
+//  Regenerated energy management (2 ohm brake resistor on AUX). The thresholds,
+//  the chopper duty ceiling and its gain all come from the pack table above.
+// ---------------------------------------------------------------------------
+#define CFG_BRAKE_R            2.0f    // ohms, resistor across the AUX terminals
+#define CFG_BRAKE_PWM_HZ       20000   // brake PWM (TIM2) — inaudible
+// A duty ceiling < 1.0 is MANDATORY: the high-side FET driver (LM5109B) is
+// bootstrapped, and its C70 capacitor only recharges while the low-side FET
+// conducts. 0.7 leaves 15 us of recharge per period at 20 kHz — very generous.
+// CFG_BRAKE_MAX_DUTY (pack table) must never exceed it; io_brake.cpp asserts so.
+#define CFG_BRAKE_DUTY_BOOTSTRAP 0.7f
+// Dead time between one FET turning off and the other turning on. Below the AUX
+// FETs' real switching time both conduct briefly = a hard short across the bus.
+// 500 ns is very conservative (ODrive uses ~240 ns). In center-aligned mode it
+// is honoured on BOTH edges (see io_brake.cpp).
+#define CFG_BRAKE_DEADTIME_NS  500
+
+// Peak dissipation into the AUX resistor at full chopper duty (W), and the
+// rating it must stay under. Printed in the boot banner and static_asserted in
+// src/app/safety.cpp — set CFG_BRAKE_P_MAX_W to YOUR resistor's rating.
+#define CFG_BRAKE_P_PEAK_W  (CFG_BRAKE_MAX_DUTY * CFG_VBUS_NOMINAL * CFG_VBUS_NOMINAL / CFG_BRAKE_R)
+#define CFG_BRAKE_P_MAX_W   250.0f
+
+// Call rate of the bus-safety block (see PRG_SAFETY): the Vbus measurement is a
+// blocking ADC conversion -- no point doing it at 1 kHz (nothing on a battery
+// bus moves that fast), and it avoids stealing CPU from PRG_FOC (PRG_SAFETY's
+// task is the more urgent one). The safety task runs at 1 kHz, so
+// CFG_BUS_SAFETY_HZ must stay an integer divisor of 1000.
+#define CFG_BUS_SAFETY_HZ      200
+#define CFG_BUS_SAFETY_DIV     (1000 / CFG_BUS_SAFETY_HZ)
 
 // Max accepted velocity setpoint (rad/s): ~90 % of the no-load speed reachable
 // under CFG_VOLT_LIMIT (KV in rpm/V -> *0.10472 for (rad/s)/V). Beyond that the
 // setpoint is physically unreachable: the PID saturates and the integrator winds
-// up to its maximum without ever converging.
+// up to its maximum without ever converging. Derived, so it follows the pack.
 #define CFG_VEL_CMD_MAX    (0.9f * CFG_VOLT_LIMIT * CFG_KV * 0.10472f)
 
 // ---------------------------------------------------------------------------
@@ -156,6 +289,8 @@
 #define CFG_CUR_I          50.0f   // current PID I
 #define CFG_CUR_D          0.0f    // current PID D (rarely used; tunable via JD)
 #define CFG_LPF_CUR_TF     0.01f   // current measurement low-pass (s)
+// /!\ DOES NOT SCALE WITH THE PACK — an open-loop probe voltage, like
+// CFG_VOLT_ALIGN: it sets a current through the winding, not a fraction of bus.
 #define CFG_CHAR_VOLTAGE   1.0f     // voltage used by characteriseMotor() for R/L
 
 // ---------------------------------------------------------------------------
@@ -196,7 +331,6 @@
 #define CFG_WATCHDOG_MS   0          // CAN setpoint timeout; 0 = disabled.
                                      // Set e.g. 250 for an e-bike so that losing
                                      // the CAN master disarms the motor.
-#define CFG_VBUS_DIV      19.0f      // Vbus ADC divider ratio — verify against your board
 
 // ============================================================================
 //  Motion controller defaults (velocity / position modes over CAN)
@@ -260,6 +394,7 @@
 //  copy the 6 printed offsets into CFG_HALL_CAL_OFFSETS -> set
 //  CFG_HALL_PRECALIBRATED to 1 -> rebuild. Otherwise the offsets only live in RAM.
 // ---------------------------------------------------------------------------
+// /!\ DOES NOT SCALE WITH THE PACK — open-loop drive voltage, as CFG_VOLT_ALIGN.
 #define CFG_HALL_CAL_VOLTAGE     2.0f    // V, voltage of the open-loop spin
 #define CFG_HALL_CAL_ELEC_SPEED  8.0f    // rad/s elec (~0.31 rad/s mech at 26pp)
 #define CFG_HALL_CAL_REVS        12      // elec revs swept (first 2 discarded)

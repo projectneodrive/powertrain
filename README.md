@@ -112,6 +112,19 @@ ESP32 + 3.3 V CAN transceiver such as the CJMCU-230) — see above.
 minimal, send-only reference examples.
 
 Motor/sensor parameters (`CFG_POLE_PAIRS`, `CFG_KV`, etc.) are plain `#define`s
-there. One compile‑time switch remains: **`SENSOR_TYPE`** (`SENSOR_TYPE_QUADRATURE` /
-`SENSOR_TYPE_HALL`, defaults to hall), which can be overridden in `platformio.ini`
-(`-D SENSOR_TYPE=SENSOR_TYPE_QUADRATURE`).
+there. Three compile‑time switches remain, each defaulted in the header and
+overridable with a `-D` flag in `platformio.ini`:
+
+* **`CFG_PACK_VOLTAGE`** (`CFG_PACK_24V` / `CFG_PACK_36V` / `CFG_PACK_48V`,
+  defaults to 24 V) — **the one variable to change when the bus changes.** It
+  selects a whole column of the pack table: `CFG_VBUS_NOMINAL`, `CFG_VOLT_LIMIT`,
+  the velocity limits, the brake chopper duty/gain and every threshold in the
+  DC‑bus ladder. `src/app/safety.cpp` `static_assert`s the ladder ordering and
+  the ADC full‑scale ceiling, so a bad column fails the build, not the bench.
+  The 24 V column is commissioned; 36 V and 48 V are computed starting points
+  and must be bench‑verified before a real pack is connected.
+* **`CFG_BUS_SOURCE`** (`CFG_BUS_SOURCE_PSU` / `CFG_BUS_SOURCE_BATTERY`,
+  defaults to PSU) — whether regenerated energy has anywhere to go. Picks the
+  brake/regen thresholds within the selected pack column.
+* **`SENSOR_TYPE`** (`SENSOR_TYPE_QUADRATURE` / `SENSOR_TYPE_HALL`, defaults to
+  hall).

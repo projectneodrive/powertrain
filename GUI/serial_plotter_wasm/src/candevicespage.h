@@ -7,9 +7,9 @@
 // station used to print them as prose every two seconds into a pane showing
 // about four seconds of history.
 //
-// It also hosts the CAN-specific functions -- e-stop and reboot are CANSimple
-// frames with no equivalent on the board's own serial console -- and states
-// plainly which commands CANSimple cannot carry at all.
+// It is a read-only monitor: the page reports link/bus/error state and a
+// timestamped event log, and sends nothing itself (use the other pages, or the
+// board's USB console, to actually command the axis).
 //
 // Plugged into the BOARD's USB port instead of the bridge, no "can ..." lines
 // arrive. The page says so and falls back to the can_tx_ok/can_tx_fail/can_rx
@@ -49,10 +49,8 @@ private slots:
 
 private:
     QTableWidget *buildTable(const QStringList &rowLabels);
-    QWidget *buildFunctionPanel();
     void setCell(QTableWidget *table, int row, const QString &text,
                  const QString &color = QString());
-    void sendCommand(const QString &command);
     void showNoLink();
 
     // Device rows
@@ -73,7 +71,6 @@ private:
     QTableWidget *m_busTable = nullptr;
     QTableWidget *m_errorTable = nullptr;
     QPlainTextEdit *m_logView = nullptr;
-    QComboBox *m_logLevelCombo = nullptr;
     QComboBox *m_filterCombo = nullptr;
     QLabel *m_statusLabel = nullptr;
 

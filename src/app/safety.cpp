@@ -97,6 +97,42 @@ static_assert(util::callsFor(10, 1000 / CFG_BUS_SAFETY_HZ) >= 2,
               "CFG_BUS_SAFETY_HZ is too low to debounce the OV trip over more "
               "than one sample - raise the rate or raise the preset here.");
 
+// ---- The ladder itself ------------------------------------------------------
+// The ordering below is declared MANDATORY in motor_config.h and in this file's
+// header comment, and until the pack-voltage table landed nothing checked it.
+// Now that one #define picks between six threshold columns, a mis-edited column
+// must fail the BUILD, not the bench.
+static_assert(CFG_BRAKE_VBUS_OFF   < CFG_BRAKE_VBUS_ON
+           && CFG_BRAKE_VBUS_ON    < CFG_VBUS_REGEN_START
+           && CFG_VBUS_REGEN_START < CFG_VBUS_REGEN_FULL
+           && CFG_VBUS_REGEN_FULL  < CFG_VBUS_OV_TRIP,
+              "DC-bus ladder out of order for this CFG_PACK_VOLTAGE/CFG_BUS_SOURCE "
+              "combination - the resistor must get its chance before braking torque "
+              "is cut, and both before the fault. Fix the column in motor_config.h.");
+
+// The trip is compared against a reading scaled by CFG_VBUS_DIV from a 3.3 V
+// ADC, so above full scale the measurement pins BELOW the threshold and the
+// last-resort fault silently becomes unreachable.
+static_assert(CFG_VBUS_OV_TRIP < 3.3f * CFG_VBUS_DIV,
+              "CFG_VBUS_OV_TRIP is above the Vbus ADC full scale (3.3 V * "
+              "CFG_VBUS_DIV) - the trip could never fire because the reading "
+              "saturates first. Lower the trip or fit a different divider.");
+
+static_assert(CFG_BRAKE_VBUS_ON > CFG_VBUS_NOMINAL,
+              "CFG_BRAKE_VBUS_ON is at or below the normal working voltage: the "
+              "chopper would modulate continuously in ordinary use.");
+
+static_assert(CFG_VOLT_LIMIT <= CFG_VBUS_NOMINAL,
+              "CFG_VOLT_LIMIT exceeds the bus it is drawn from.");
+
+// P_peak = duty * Vbus^2 / R. The duty ceiling is per-column precisely so this
+// stays near constant as the pack voltage rises; see the derivations in
+// motor_config.h.
+static_assert(CFG_BRAKE_P_PEAK_W <= CFG_BRAKE_P_MAX_W,
+              "CFG_BRAKE_MAX_DUTY would exceed the AUX resistor's rating at this "
+              "pack voltage - lower the duty for that column, or raise "
+              "CFG_BRAKE_P_MAX_W to match the resistor actually fitted.");
+
 // ---- Stage 2: regen derate ---------------------------------------------------
 // Linearly withdraw permission to brake electrically as the bus climbs from
 // REGEN_START to REGEN_FULL. A safety net only: those thresholds sit ABOVE the

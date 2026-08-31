@@ -21,7 +21,6 @@
 #include <QVBoxLayout>
 
 #include <array>
-#include <utility>
 
 namespace {
 
@@ -119,9 +118,6 @@ CanDevicesPage::CanDevicesPage(QWidget *parent) : QWidget(parent)
     m_nodesLabel->setWordWrap(true);
     outer->addWidget(m_nodesLabel);
 
-    // ----------------------------------------------------------- functions --
-    outer->addWidget(buildFunctionPanel());
-
     // ----------------------------------------------------------- event log --
     auto *logGroup = new QGroupBox(QStringLiteral("CAN events"));
     auto *logLayout = new QVBoxLayout(logGroup);
@@ -193,72 +189,6 @@ QTableWidget *CanDevicesPage::buildTable(const QStringList &rowLabels)
     return t;
 }
 
-QWidget *CanDevicesPage::buildFunctionPanel()
-{
-    auto *g = new QGroupBox(QStringLiteral("CAN functions"));
-    auto *layout = new QVBoxLayout(g);
-
-    // Grouped by consequence, not alphabetically: the two that stop a spinning
-    // motor sit apart from the two that reconfigure it.
-    auto *row1 = new QHBoxLayout;
-    const std::array<std::pair<const char *, const char *>, 3> motion = {{
-        {"Arm (A)", "A"}, {"Idle (I)", "I"}, {"Clear errors (C)", "C"}}};
-    for (const auto &b : motion) {
-        auto *btn = new QPushButton(QString::fromLatin1(b.first));
-        const QString cmd = QString::fromLatin1(b.second);
-        connect(btn, &QPushButton::clicked, this, [this, cmd] { sendCommand(cmd); });
-        row1->addWidget(btn);
-    }
-    layout->addLayout(row1);
-
-    auto *row2 = new QHBoxLayout;
-    auto *estop = new QPushButton(QStringLiteral("E-STOP (E)"));
-    estop->setStyleSheet(QStringLiteral("font-weight:bold;color:%1;").arg(QLatin1String(kBad)));
-    estop->setToolTip(QStringLiteral(
-        "CANSimple Estop (0x002). Latches the axis off. There is no equivalent "
-        "on the board's own serial console."));
-    auto *reboot = new QPushButton(QStringLiteral("Reboot board (R)"));
-    reboot->setToolTip(QStringLiteral("CANSimple Reboot (0x016). The link will drop and come back."));
-    auto *faults = new QPushButton(QStringLiteral("Refresh fault codes (F)"));
-    faults->setToolTip(QStringLiteral(
-        "Requests the motor / encoder / controller error words. They are answered "
-        "on request, not broadcast, so they only refresh when you ask."));
-    connect(estop, &QPushButton::clicked, this, [this] { sendCommand(QStringLiteral("E")); });
-    connect(reboot, &QPushButton::clicked, this, [this] { sendCommand(QStringLiteral("R")); });
-    connect(faults, &QPushButton::clicked, this, [this] { sendCommand(QStringLiteral("F")); });
-    row2->addWidget(estop);
-    row2->addWidget(reboot);
-    row2->addWidget(faults);
-    layout->addLayout(row2);
-
-    auto *row3 = new QHBoxLayout;
-    row3->addWidget(new QLabel(QStringLiteral("Station log level")));
-    m_logLevelCombo = new QComboBox;
-    m_logLevelCombo->addItem(QStringLiteral("D0 — errors only"));
-    m_logLevelCombo->addItem(QStringLiteral("D1 — + warnings"));
-    m_logLevelCombo->addItem(QStringLiteral("D2 — + state changes (default)"));
-    m_logLevelCombo->addItem(QStringLiteral("D3 — + per-frame CAN trace"));
-    m_logLevelCombo->setCurrentIndex(logevt::Info);
-    m_logLevelCombo->setToolTip(QStringLiteral(
-        "How much the ESP32 sends. This is the source-side filter -- it stops the "
-        "lines being transmitted at all, unlike the 'Show' filter below which only "
-        "hides them here."));
-    connect(m_logLevelCombo, QOverload<int>::of(&QComboBox::activated), this,
-            [this](int i) { sendCommand(QStringLiteral("D%1").arg(i)); });
-    row3->addWidget(m_logLevelCombo, 1);
-    layout->addLayout(row3);
-
-    auto *note = new QLabel(QStringLiteral(
-        "Not reachable over CAN: <b>KD</b> (velocity D), <b>JP/JI/JD</b> (current PID), "
-        "<b>PI/PD</b> (position I/D) and <b>H</b> (hall calibration). CANSimple has no "
-        "command carrying them — use the board's own USB console for those."));
-    note->setWordWrap(true);
-    note->setStyleSheet(QStringLiteral("color:%1;font-size:11px;").arg(QLatin1String(kMuted)));
-    layout->addWidget(note);
-
-    return g;
-}
-
 void CanDevicesPage::setCell(QTableWidget *table, int row, const QString &text,
                              const QString &color)
 {
@@ -270,17 +200,6 @@ void CanDevicesPage::setCell(QTableWidget *table, int row, const QString &text,
         item->setData(Qt::ForegroundRole, QVariant());   // back to the palette
     else
         item->setForeground(QColor(color));
-}
-
-void CanDevicesPage::sendCommand(const QString &command)
-{
-    auto &bridge = SerialBridge::instance();
-    if (!bridge.isConnected()) {
-        m_statusLabel->setText(QStringLiteral("Connect to the USB serial port first"));
-        return;
-    }
-    bridge.writeLine(command);
-    m_statusLabel->setText(QStringLiteral("Sent: %1").arg(command));
 }
 
 void CanDevicesPage::showNoLink()
@@ -447,14 +366,6 @@ void CanDevicesPage::onCanStatus(const QHash<QString, QString> &f)
     m_nodesLabel->setText(seen.isEmpty()
         ? QStringLiteral("Nodes seen on the bus: <i>none yet</i>")
         : QStringLiteral("Nodes seen on the bus: %1").arg(seen.join(QStringLiteral(", "))));
-
-    // Keep the level selector honest: the station reports the level it is
-    // actually running at, which may have been set from the serial console.
-    const int lvl = int(tokenUInt(f, "loglvl", logevt::Info));
-    if (m_logLevelCombo && lvl >= 0 && lvl < m_logLevelCombo->count() &&
-        lvl != m_logLevelCombo->currentIndex()) {
-        m_logLevelCombo->setCurrentIndex(lvl);
-    }
 }
 
 void CanDevicesPage::onTelemetry(double, const std::array<double, kNumChannels> &,
