@@ -46,6 +46,13 @@ class Axis {
   bool setVelocity(float rad_s);
   bool setPosition(float rad);
 
+  // Counter-torque regenerative brake. The MAGNITUDE of the braking torque in
+  // Nm, always >= 0; the board takes the direction from the rotation. The value
+  // rides the Set_Input_Torque frame, which lands in input_brake rather than
+  // input_torque while the board is in CTRL_BRAKE - same unit, different field.
+  // See the deviation note in lib/odrive_can/odrive_can.cpp.
+  bool setBrake(float nm);
+
   // Send a velocity without re-asserting the mode when already in it. The
   // joystick calls this at 10 Hz; re-asserting would double the bus traffic on
   // every tick, and would also stop a one-off T/X command from ever holding.

@@ -37,6 +37,11 @@ AXIS_MODE(CTRL_VOLTAGE,  0, "VOLTAGE")
 AXIS_MODE(CTRL_TORQUE,   1, "TORQUE")
 AXIS_MODE(CTRL_VELOCITY, 2, "VELOCITY")
 AXIS_MODE(CTRL_POSITION, 3, "POSITION")
+// PROJECT EXTENSION, not an ODrive mode. Constant counter-torque regenerative
+// brake: the setpoint is a braking torque in Nm, and the axis answers with a
+// current whose sign always opposes rotation. See src/app/control.cpp for the
+// law and lib/odrive_can/odrive_can.cpp for how the setpoint reaches the wire.
+AXIS_MODE(CTRL_BRAKE,    4, "BRAKE")
 
 // ---- Error bits (ORed into AxisIO::axis_error) ------------------------------
 AXIS_ERROR(ERR_INVALID_STATE,       0x00000001, "INVALID_STATE")

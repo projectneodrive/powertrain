@@ -183,6 +183,7 @@ entry catches the line.
 | `V<rad/s>` | velocity setpoint | `Set_Controller_Mode` + `Set_Input_Vel` |
 | `T<Nm>` | torque setpoint | `Set_Controller_Mode` + `Set_Input_Torque` |
 | `X<rad>` | position setpoint | `Set_Controller_Mode` + `Set_Input_Pos` |
+| `B<Nm>` | brake torque (counter-torque regen) | `Set_Controller_Mode(4)` + `Set_Input_Torque` — same frame, lands in `input_brake` |
 | `M` | measure phase R/L | `Set_Axis_State(MOTOR_CALIBRATION)` |
 | `C` | clear errors | `Clear_Errors` |
 | `KP<v>` `KI<v>` `K` | velocity PID P / I / reapply | `Set_Vel_Gains(P, I)` |

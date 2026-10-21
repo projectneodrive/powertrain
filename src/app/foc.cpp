@@ -35,6 +35,31 @@ inline void regenClamp(float &current_sp, float velocity, float limit) {
     current_sp = util::limit(-limit, current_sp, limit);
 }
 
+// CTRL_BRAKE promises a torque that NEVER drives, and regenClamp above cannot
+// deliver that promise on its own: it bounds the BRAKING half and deliberately
+// leaves motoring alone, so a command whose sign no longer matches the rotation
+// passes through at full scale.
+//
+// In every other mode a same-sign pair is a legitimate motoring command. In
+// this one it is a STALE SIGN: the law takes its sign from the velocity it saw
+// when app::control ran, at 1 kHz, and that command then persists for 20 FOC
+// ticks. If the shaft reverses inside that window the axis would drive it, and
+// at the current limit. So here the command is ZEROED rather than clamped —
+// coasting is always a safe answer, and the next control scan recomputes a
+// correctly signed one 1 ms later.
+//
+// With CFG_REGEN_OMEGA_ON above the sensor's noise floor a real reversal inside
+// 1 ms is not physically reachable, which is the primary defence; this is the
+// invariant that holds whatever the thresholds are set to.
+//
+// One exception, and it is why motor_config.h requires a STRICTLY POSITIVE
+// floor: at velocity exactly +/-0 this check and regenClamp are BOTH no-ops,
+// because x * 0 is neither > 0 nor < 0. Nothing here can protect that one
+// point, so the law upstream must never emit a command there.
+inline void noDrivingTorque(float &current_sp, float velocity) {
+  if (current_sp * velocity > 0.0f) current_sp = 0.0f;
+}
+
 }  // namespace
 
 void update() {
@@ -51,6 +76,8 @@ void update() {
     motor.move(state::control.active_target);
 
     float sp = motor.current_sp;
+    if (state::axis.control_mode == odcan::CTRL_BRAKE)
+      noDrivingTorque(sp, motor.shaft_velocity);
     regenClamp(sp, motor.shaft_velocity, state::safety.regen_iq_limit);
     motor.current_sp = sp;
   }

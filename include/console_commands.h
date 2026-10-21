@@ -42,6 +42,9 @@ CONSOLE_CMD('I', 0,   GRP_CMDS,   "I idle",         cmdIdle)
 CONSOLE_CMD('V', 0,   GRP_CMDS,   "V<rad/s>",       cmdVelocity)
 CONSOLE_CMD('T', 0,   GRP_CMDS,   "T<Nm>",          cmdTorque)
 CONSOLE_CMD('X', 0,   GRP_CMDS,   "X<rad> pos",     cmdPosition)
+// 'B' for brake. Taken letters across BOTH consoles are
+// A C D E F G H I J K L M P Q R T V X Z; keep bridge_commands.h in step.
+CONSOLE_CMD('B', 0,   GRP_CMDS,   "B<Nm> brake-torque", cmdBrake)
 CONSOLE_CMD('M', 0,   GRP_CMDS,   "M charac R/L",   cmdCharacterise)
 #if SENSOR_TYPE == SENSOR_TYPE_HALL
 CONSOLE_CMD('H', 0,   GRP_CMDS,   "H hall-cal",     cmdHallCal)

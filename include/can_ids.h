@@ -46,6 +46,14 @@ enum Cmd : uint8_t {
   CMD_SET_VEL_GAINS         = 0x01B,
   CMD_GET_ADC_VOLTAGE       = 0x01C,
   CMD_GET_CONTROLLER_ERROR  = 0x01D,
+
+  // ---- Project extension ---------------------------------------------------
+  // Get_Powers: the DC-bus energy balance (battery power, brake-resistor power)
+  // that the constant-power brake needs and CANSimple has no frame for.
+  // 0x01F is left RESERVED by ODrive fw-v0.5.6, which is why it was chosen.
+  // ODrive 0.6 does define a Get_Powers, but at 0x01D — already taken here by
+  // Get_Controller_Error in its 0.5.6 meaning, so that id was not available.
+  CMD_GET_POWERS            = 0x01F,
 };
 
 // ---- Id arithmetic ---------------------------------------------------------

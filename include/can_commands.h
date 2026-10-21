@@ -51,6 +51,7 @@ CAN_RX(CMD_GET_BUS_VI,            rxGetBusVI)
 CAN_RX(CMD_GET_MOTOR_ERROR,       rxGetMotorError)
 CAN_RX(CMD_GET_ENCODER_ERROR,     rxGetEncoderError)
 CAN_RX(CMD_GET_CONTROLLER_ERROR,  rxGetControllerError)
+CAN_RX(CMD_GET_POWERS,            rxGetPowers)
 
 // ---- Cyclic telemetry -------------------------------------------------------
 // Order matters only in that it fixes the slot each timer uses; keep encoder
@@ -59,3 +60,6 @@ CAN_TX_CYCLIC(CMD_GET_ENCODER_ESTIMATES,  10, sendEncoderEstimates)   // 100 Hz
 CAN_TX_CYCLIC(CMD_HEARTBEAT,             100, sendHeartbeat)          //  10 Hz
 CAN_TX_CYCLIC(CMD_GET_IQ,                100, sendIq)
 CAN_TX_CYCLIC(CMD_GET_BUS_VI,            100, sendBusVI)
+// Project extension, not an ODrive frame. 10 Hz is plenty: it carries a thermal
+// and an energy quantity, neither of which moves at the rate a current does.
+CAN_TX_CYCLIC(CMD_GET_POWERS,            100, sendPowers)

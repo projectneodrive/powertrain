@@ -60,6 +60,23 @@ bool Axis::setTorque(float nm) {
   return _link.send<odcan::CMD_SET_INPUT_TORQUE>(d, 8);
 }
 
+// The same frame as setTorque and the same unit (Nm); the MODE is what decides
+// which field it lands in on the board. The caller has already sent the mode,
+// and Set_Controller_Mode (0x00B) has the lower arbitration id, so the two
+// cannot overtake each other on the bus.
+//
+// Clamped non-negative here too: the sign is not the caller's to choose, the
+// board derives it from the rotation. The board clamps it again on arrival.
+bool Axis::setBrake(float nm) {
+  const float t = (nm > 0.0f) ? nm : 0.0f;
+  uint8_t d[8] = {0};
+  putF32(d, t);
+  _st.c.control_mode = odcan::CTRL_BRAKE;
+  _st.c.input_brake  = t;
+  _st.c.target       = t;
+  return _link.send<odcan::CMD_SET_INPUT_TORQUE>(d, 8);
+}
+
 bool Axis::setVelocity(float rad_s) {
   uint8_t d[8] = {0};
   putF32(d,     rad_s / TWO_PI);              // rad/s -> rev/s
@@ -250,6 +267,15 @@ void Axis::rx_sendBusVI(const uint8_t* b, uint8_t len, uint32_t now_ms) {
   _st.m.vbus_v     = getF32(b);
   _st.m.ibus_a     = getF32(b + 4);
   _st.m.have_vbus  = true;
+}
+
+// Project frame (0x01F), not ODrive. The bus energy balance behind the
+// constant-power brake: what the pack absorbs and what the resistor burns.
+void Axis::rx_sendPowers(const uint8_t* b, uint8_t len, uint32_t now_ms) {
+  if (len < 8) return;
+  _st.m.p_batt_w     = getF32(b);
+  _st.m.p_res_w      = getF32(b + 4);
+  _st.m.have_powers  = true;
 }
 
 // ---------------------------------------------------------------------------

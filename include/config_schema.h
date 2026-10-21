@@ -77,3 +77,31 @@ CONFIG_PARAM(vbus_nom,      "Vbus nominal",       "V",            "",   1, 24.0,
              CFG_VBUS_NOMINAL,             CFG_VBUS_NOMINAL)
 CONFIG_PARAM(volt_limit,    "Voltage limit",      "V",            "",   1, 23.5,
              motor.voltage_limit,          CFG_VOLT_LIMIT)
+
+// ---- Gearbox and constant-power brake (read-only) ---------------------------
+// These are what an operator needs to interpret the cadence and power channels:
+// without gear_ratio the crank figures are unreadable, and without the cadence
+// thresholds it is impossible to tell "the brake is off" from "the brake is
+// broken". bemf_omega_max is the speed past which the inverter loses control of
+// the current — the one number on this list that is a hazard, not a setting.
+CONFIG_PARAM(gear_ratio,    "Gear ratio",         "motor/crank",  "",   1, 72.0,
+             CFG_GEAR_RATIO,               CFG_GEAR_RATIO)
+CONFIG_PARAM(regen_on,      "Regen ON speed",     "rad/s motor",  "",   2, 4.5,
+             CFG_REGEN_OMEGA_ON,           CFG_REGEN_OMEGA_ON)
+CONFIG_PARAM(regen_off,     "Regen OFF speed",    "rad/s motor",  "",   2, 3.4,
+             CFG_REGEN_OMEGA_OFF,          CFG_REGEN_OMEGA_OFF)
+CONFIG_PARAM(regen_floor,   "Regen speed floor",  "rad/s motor",  "",   2, 3.22,
+             CFG_REGEN_OMEGA_FLOOR,        CFG_REGEN_OMEGA_FLOOR)
+// The LIVE ceiling rather than CFG_REGEN_T_MAX: brakeCurrent() clamps against
+// the current limit as it stands, which 'LC' can move, so reporting the
+// compile-time constant would go stale the moment it did.
+CONFIG_PARAM(regen_t_max,   "Brake torque ceiling", "Nm",         "",   2, 4.03,
+             motor.current_limit * CFG_KT, c.current_limit * CFG_KT)
+CONFIG_PARAM(regen_t_slew,  "Brake torque slew",  "Nm/s",         "",   1, 8.0,
+             CFG_REGEN_T_SLEW,             CFG_REGEN_T_SLEW)
+CONFIG_PARAM(bemf_omega_max, "Back-EMF speed limit", "rad/s motor", "", 1, 20.2,
+             CFG_BEMF_OMEGA_MAX,           CFG_BEMF_OMEGA_MAX)
+CONFIG_PARAM(brake_r,       "Brake resistor",     "ohm",          "",   2, 2.0,
+             CFG_BRAKE_R,                  CFG_BRAKE_R)
+CONFIG_PARAM(brake_p_cont,  "Brake continuous",   "W",            "",   1, 100.0,
+             CFG_BRAKE_P_CONT,             CFG_BRAKE_P_CONT)

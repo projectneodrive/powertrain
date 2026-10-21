@@ -110,6 +110,19 @@ void bringUpHardware() {
   Serial.print(" V, brake peak ");    Serial.print(CFG_BRAKE_P_PEAK_W, 0);
   Serial.println(" W");
 
+  // The CTRL_BRAKE operating window. Worth printing beside the bus ladder and
+  // not only in the 'Q' dump: the floor and the back-EMF ceiling are properties
+  // of the motor and the pack, so they are what tells you whether the fitted
+  // motor can run this mode at all before anything is spun.
+  Serial.print("[brake] window ");    Serial.print(CFG_REGEN_OMEGA_FLOOR, 2);
+  Serial.print(" (floor) < ");        Serial.print(CFG_REGEN_OMEGA_OFF, 2);
+  Serial.print("/");                  Serial.print(CFG_REGEN_OMEGA_ON, 2);
+  Serial.print(" (off/on) < ");       Serial.print(CFG_BEMF_OMEGA_MAX, 1);
+  Serial.print(" rad/s (back-EMF), torque <= ");
+  Serial.print(CFG_REGEN_T_MAX, 2);
+  Serial.print(" Nm at ");            Serial.print(CFG_REGEN_T_SLEW, 1);
+  Serial.println(" Nm/s");
+
   io::can::init();
 }
 

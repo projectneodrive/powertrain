@@ -42,6 +42,14 @@ struct FromSafety {
   volatile float regen_iq_limit = CFG_CURRENT_LIMIT; // A, max |Iq| opposing rotation
   volatile bool  fault          = false;             // latched
 
+  // Brake-resistor dissipation and the thermal derate derived from it. Both are
+  // published here rather than recomputed by their readers because this module
+  // is the only writer of the chopper duty they depend on. p_res feeds the bus
+  // energy balance in app::comms; brake_derate is already folded into
+  // regen_iq_limit above and is published for telemetry only.
+  volatile float p_res          = 0.0f;              // W, duty * Vbus^2 / R
+  volatile float brake_derate   = 1.0f;              // 1 = cold, 0 = fully derated
+
   // Things the safety module wants SAID. It must not say them itself: it runs
   // at PRIO_SAFETY, one priority ABOVE the FOC loop, and the Arduino core's
   // Serial::write() BUSY-WAITS when the 64-byte TX buffer is full:

@@ -133,6 +133,99 @@ static_assert(CFG_BRAKE_P_PEAK_W <= CFG_BRAKE_P_MAX_W,
               "pack voltage - lower the duty for that column, or raise "
               "CFG_BRAKE_P_MAX_W to match the resistor actually fitted.");
 
+static_assert(CFG_BRAKE_P_CONT <= CFG_BRAKE_P_MAX_W,
+              "the AUX resistor cannot take more CONTINUOUSLY than it takes at "
+              "its peak - one of the two ratings is wrong.");
+
+// ---- The counter-torque brake's operating window -----------------------------
+// Same principle as the ladder above: a threshold set where the mode could
+// never engage, or could only engage somewhere the inverter does not control
+// the current, must fail the BUILD rather than be discovered on the rig.
+static_assert(CFG_GEAR_RATIO > 0.0f,
+              "CFG_GEAR_RATIO must be positive - it is a motor/crank speed "
+              "ratio, and the telemetry is divided through it.");
+
+static_assert(CFG_REGEN_OMEGA_OFF < CFG_REGEN_OMEGA_ON,
+              "regen speed hysteresis is inverted: OFF must be below ON, or "
+              "the latch can never release.");
+
+// The braking current's sign comes from copysignf(omega), and at omega exactly
+// +/-0 that sign is meaningless while BOTH guards in app::foc are no-ops -
+// x * 0 is neither > 0 nor < 0. A zero threshold would therefore be the one
+// speed at which nothing protects the axis, so neither end may be zero.
+static_assert(CFG_REGEN_OMEGA_FLOOR > 0.0f && CFG_REGEN_OMEGA_ON > 0.0f,
+              "CFG_REGEN_OMEGA_FLOOR and CFG_REGEN_OMEGA_ON must both be "
+              "strictly positive: the brake must never evaluate its sign at "
+              "omega == 0, where app::foc's sign check and its regen clamp are "
+              "both no-ops. Check CFG_REGEN_EDGES_MIN too - it scales the "
+              "floor.");
+
+// The one that was missing, and the reason the brake once oscillated instead of
+// braking. The command's SIGN is the sign of omega, so engaging where the
+// velocity estimate cannot resolve its own sign produces a current command that
+// flips with the noise - it motors the shaft in alternating directions and
+// collapses the bus. Constant torque made that quieter than the constant-power
+// law did (a fixed magnitude rather than a saturated one) but not safer.
+// CFG_REGEN_OMEGA_FLOOR is derived from the fitted sensor; see motor_config.h.
+static_assert(CFG_REGEN_OMEGA_ON >= CFG_REGEN_OMEGA_FLOOR,
+              "CFG_REGEN_OMEGA_ON is inside the velocity estimate's noise "
+              "floor, where the sign of omega - and therefore the sign of the "
+              "braking current - is quantisation rather than measurement. "
+              "Raise it to at least CFG_REGEN_OMEGA_FLOOR (printed by the boot "
+              "banner and the 'Q' line). Note these thresholds are MOTOR rad/s "
+              "and deliberately do NOT scale with CFG_GEAR_RATIO: use "
+              "CFG_REGEN_CRANK_RPM() to set them from a cadence.");
+
+// A ramp narrower than the hysteresis band would step the torque in at the full
+// value the instant the latch closes, which the shaft feels as a grab.
+static_assert(CFG_REGEN_RAMP_BAND > 0.0f,
+              "CFG_REGEN_RAMP_BAND must be positive - the law divides by it.");
+
+// The hard one. Past CFG_BEMF_OMEGA_MAX the motor's own back-EMF exceeds the
+// bus and the free-wheel diodes rectify into it regardless of what the gates
+// do. Engaging a braking law there would command a current the bridge cannot
+// source, on top of a bus already being force-charged.
+static_assert(CFG_REGEN_OMEGA_ON < CFG_BEMF_OMEGA_MAX,
+              "CFG_REGEN_OMEGA_ON is at or above the speed where the line "
+              "back-EMF reaches CFG_VOLT_LIMIT - the inverter does not control "
+              "the current there. Lower it, or fit a motor with a higher KV.");
+
+// Both ends of the window at once: the floor must leave room under the ceiling,
+// or there is no speed at which this mode can legally run.
+static_assert(CFG_REGEN_OMEGA_FLOOR < CFG_BEMF_OMEGA_MAX,
+              "the velocity-estimate floor is above the back-EMF ceiling: this "
+              "motor has no speed range where the brake is both measurable and "
+              "controllable. A lower pole count or a higher KV opens the "
+              "window.");
+
+static_assert(CFG_REGEN_OMEGA_ON < CFG_VEL_LIMIT_MAX,
+              "the regen engagement threshold is outside the reachable speed "
+              "range: CTRL_BRAKE could never activate.");
+
+// brakeCurrent() clamps the setpoint against the LIVE current limit, so this
+// relationship holds today and the final clamp in that function is unreachable.
+// If the two are ever decoupled, that clamp would start absorbing the
+// difference silently - with nothing in the telemetry to show it.
+static_assert(CFG_REGEN_T_MAX <= CFG_REGEN_I_MAX * CFG_KT,
+              "CFG_REGEN_T_MAX exceeds the torque CFG_REGEN_I_MAX can deliver; "
+              "the clamp at the end of brakeCurrent() would silently eat the "
+              "difference.");
+
+static_assert(CFG_REGEN_T_SLEW >= 0.0f,
+              "CFG_REGEN_T_SLEW is a rate in Nm/s; 0 disables the ramp and "
+              "negative is meaningless.");
+
+// FOC updates per ELECTRICAL revolution at the top of the speed range. Below
+// ~15 the commutation angle is refreshed too coarsely for the current loop to
+// hold a clean dq frame. f_elec = pp * omega / (2*pi), so the count is
+// FOC_TICK_HZ * 2*pi / (pp * omega); the form below avoids the division.
+// This is what a high-pole-count motor runs into first at G = 72.
+static_assert((float)FOC_TICK_HZ * TWO_PI
+                  >= 15.0f * (float)CFG_POLE_PAIRS * CFG_VEL_LIMIT_MAX,
+              "fewer than 15 FOC updates per electrical revolution at "
+              "CFG_VEL_LIMIT_MAX - lower CFG_POLE_PAIRS, lower the velocity "
+              "ceiling, or raise FOC_TICK_HZ.");
+
 // ---- Stage 2: regen derate ---------------------------------------------------
 // Linearly withdraw permission to brake electrically as the bus climbs from
 // REGEN_START to REGEN_FULL. A safety net only: those thresholds sit ABOVE the
@@ -141,6 +234,37 @@ float regenDerate(float vbus, float current_limit) {
   float s = 1.0f - (vbus - CFG_VBUS_REGEN_START)
                  / (CFG_VBUS_REGEN_FULL - CFG_VBUS_REGEN_START);
   return current_limit * util::limit(0.0f, s, 1.0f);
+}
+
+// ---- Resistor thermal model ---------------------------------------------------
+// Stage 2 above answers "is the bus climbing?". This answers a different
+// question the bus voltage cannot: "has the resistor been taking more than it
+// can shed?". On a PSU bus they diverge badly — the chopper holds Vbus flat
+// while burning 200 W continuously, so every voltage-based test says everything
+// is fine right up until the resistor fails.
+//
+// A single-pole model on the NORMALISED overload, which is all the accuracy the
+// two constants available justify: s_brake_load is dissipation expressed in
+// units of the continuous rating, low-passed over the thermal time constant.
+// 1.0 means "sitting exactly at the continuous rating". It is driven by the
+// duty actually applied, so on a battery bus — where the chopper mostly idles —
+// it decays to zero and the derate is inert without needing a #if.
+//
+// Deliberately NOT a temperature: calling it degrees would invite tuning it
+// against a thermocouple reading, and the model has no thermal resistance term
+// to make that meaningful.
+float s_brake_load = 0.0f;
+
+float brakeThermalDerate(float p_res) {
+  const float dt = 1.0f / (float)CFG_BUS_SAFETY_HZ;
+  s_brake_load += (p_res / CFG_BRAKE_P_CONT - s_brake_load)
+                  * dt / CFG_BRAKE_THERMAL_TAU_S;
+  // Derate linearly from DERATE_START to 1.0 of the rating rather than cutting
+  // at the limit: a step here would be felt by the rider as the brake letting
+  // go, and would set up a slow hunt around the threshold.
+  float over = (s_brake_load - CFG_BRAKE_DERATE_START)
+               / (1.0f - CFG_BRAKE_DERATE_START);
+  return util::limit(0.0f, 1.0f - over, 1.0f);
 }
 
 // ---- Stage 1: the brake chopper ----------------------------------------------
@@ -178,7 +302,22 @@ void runBusProtection() {
     state::safety.say_ov_trip = true;
   }
 
-  state::safety.regen_iq_limit = regenDerate(vb, io::motor::motor.current_limit);
+  // Dissipation is computed from the duty that was actually applied on the
+  // previous scan. Ibrk in the telemetry is the same quantity as a current, and
+  // carries the same caveat: there is no shunt on the AUX branch, so this is
+  // what was COMMANDED. A resistor that is not conducting reads as hot here.
+  float p_res = io::brake::duty() * vb * vb / CFG_BRAKE_R;
+  state::safety.p_res        = p_res;
+  state::safety.brake_derate = brakeThermalDerate(p_res);
+
+  // Both derates land on the same knob, and the tighter one wins. They guard
+  // different failures — the bus climbing (voltage) and the resistor saturating
+  // (energy) — and either alone leaves the other open. Applied downstream at
+  // 20 kHz by app::foc, and only to torque that OPPOSES rotation, so motoring
+  // is never penalised for the resistor's state.
+  float lim = regenDerate(vb, io::motor::motor.current_limit);
+  float thermal = io::motor::motor.current_limit * state::safety.brake_derate;
+  state::safety.regen_iq_limit = fminf(lim, thermal);
 }
 
 }  // namespace

@@ -16,7 +16,9 @@ struct Cmd {
     const char *description;
 };
 
-// Mirrors handleSerial() in src/main.cpp. Keep in sync when commands change.
+// Mirrors include/console_commands.h (the firmware's command table) plus the
+// station's own can_utilities/src/bridge_commands.h. Hand-maintained, so keep it
+// in sync when either changes.
 const Cmd kCommands[] = {
     {"A", "A", "Arm — enter closed loop. Runs a one-time calibration on first arm (the motor twitches; keep it free)."},
     {"I", "I", "Idle — disarm, back to the safe state."},
@@ -26,6 +28,7 @@ const Cmd kCommands[] = {
     {"V<rad/s>", "V10", "Velocity setpoint — switches to velocity mode."},
     {"T<Nm>", "T0.5", "Torque setpoint — switches to torque mode."},
     {"X<rad>", "X3.14", "Position setpoint — switches to position mode."},
+    {"B<Nm>", "B1.5", "Brake torque — switches to the counter-torque regen brake. The sign is not yours to set: the torque always opposes rotation, and is zero below the engagement speed, so the shaft stays free until something turns it."},
     {"KP<v>", "KP0.3", "Velocity PID proportional gain (Nm per rad/s)."},
     {"KI<v>", "KI2", "Velocity PID integral gain."},
     {"KD<v>", "KD0", "Velocity PID derivative gain."},

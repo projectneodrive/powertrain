@@ -79,12 +79,17 @@ Channel = Tuple[str, str, str, str]
 _FALLBACK_CHANNELS: List[Channel] = [
     ("tgt", "Target", "#f97316", ""),
     ("Iq", "Iq [A]", "#22c55e", "iq"),
-    ("vel", "Vel [rad/s]", "#3b82f6", ""),
-    ("pos", "Pos [rad]", "#a855f7", ""),
+    ("vel", "Cadence [rad/s crank]", "#3b82f6", ""),
+    ("pos", "Pos crank [rad]", "#a855f7", ""),
     ("Vbus", "Vbus [V]", "#ef4444", "vbus"),
     ("Irgn", "Regen [A]", "#06b6d4", ""),
     ("Ibrk", "Brake [A]", "#eab308", ""),
+    ("cad", "Cadence [rpm]", "#84cc16", ""),
+    ("Pres", "P resistor [W]", "#f59e0b", ""),
+    ("Pbat", "P battery [W]", "#10b981", ""),
+    ("Ibat", "I battery [A]", "#34d399", ""),
     ("blnd", "blend", "#ec4899", ""),
+    ("obsdV", "obs dV [rad/s]", "#14b8a6", ""),
 ]
 
 # TELEMETRY_CHANNEL(key, "label", "colour", "altkey", prec, expr) — and its

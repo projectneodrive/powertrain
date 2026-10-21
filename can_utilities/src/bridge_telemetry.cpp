@@ -51,6 +51,38 @@ bool Irgn(const State& s, float& out) {
   return true;
 }
 
+// Crank cadence. vel_rad_s already arrives crank-referenced — the board divides
+// by CFG_GEAR_RATIO before it reaches Get_Encoder_Estimates (a documented
+// deviation; see src/app/comms.cpp) — so this is only a change of unit.
+bool cad(const State& s, float& out) {
+  if (!s.m.have_encoder) return false;
+  out = s.m.vel_rad_s * 60.0f / TWO_PI;
+  return true;
+}
+
+// The bus energy balance, from the project's Get_Powers frame.
+bool Pbat(const State& s, float& out) {
+  if (!s.m.have_powers) return false;
+  out = s.m.p_batt_w;
+  return true;
+}
+
+bool Pres(const State& s, float& out) {
+  if (!s.m.have_powers) return false;
+  out = s.m.p_res_w;
+  return true;
+}
+
+// Battery current is deliberately not on the wire: it is p_batt / vbus, and
+// sending it would create a second value that can disagree with its own inputs.
+// Both guards are needed — the two quantities ride different frames.
+bool Ibat(const State& s, float& out) {
+  if (!s.m.have_powers || !s.m.have_vbus || s.m.vbus_v <= 1.0f) return false;
+  out = s.m.p_batt_w / s.m.vbus_v;
+  return true;
+}
+
+
 // ---------------------------------------------------------------------------
 //  Channels the bridge CANNOT source. Not an oversight — there is no CANSimple
 //  command that carries them, so they exist only on the board's own USB stream.

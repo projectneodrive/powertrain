@@ -33,6 +33,94 @@ float velocityRamp(float current, float cmd, uint32_t scan_ms) {
   return current + util::limit(-step, cmd - current, step);
 }
 
+// ---- CTRL_BRAKE: the constant counter-torque regenerative brake ---------------
+//  Iq = -copysign(T / Kt, omega). The magnitude is whatever torque was asked
+//  for; the SIGN is taken from the rotation, which is what makes it a brake.
+//
+//   * THE SIGN IS THE WHOLE SAFETY ARGUMENT, and it is the one thing this law
+//     inherited from the constant-power law it replaced. copysign opposes the
+//     rotation whichever way the shaft turns, and T is clamped non-negative
+//     before it is used, so no input can turn it into a driving torque. Stop
+//     turning the shaft and the latch drops: zero.
+//
+//   * Which is also why the floor below is not optional. A sign is only
+//     meaningful where the velocity estimate resolves it - see
+//     CFG_REGEN_OMEGA_FLOOR in motor_config.h.
+//
+//   * Bus over-voltage and resistor temperature are NOT applied here. They are
+//     applied downstream at 20 kHz by app::foc through
+//     state::safety.regen_iq_limit, and only to the half of the domain that
+//     opposes rotation. Repeating them at this task's 1 kHz would put two
+//     limiters in series on one quantity at two different rates, and the slower
+//     one would win in a way nobody could predict from either file.
+//
+//  The RETURN value is in amps, matching the CTRL_TORQUE branch below, which
+//  divides by Kt for the same reason. The SETPOINT is in Nm.
+util::Hysteresis s_regen;
+
+// Nm, the brake torque actually being applied - the slew ramp's state. Kept
+// here rather than in state::control.active_target (where the velocity ramp
+// keeps its own) because active_target is in AMPS and is SIGNED by the
+// direction of rotation: a shaft reversal would flip it, and the ramp would
+// then slew from the negated value instead of continuing smoothly.
+float s_brake_t = 0.0f;
+
+void brakeReset() { s_regen.reset(); s_brake_t = 0.0f; }
+
+float brakeRamp(float current, float cmd, uint32_t scan_ms) {
+  if (CFG_REGEN_T_SLEW <= 0.0f) return cmd;
+  float step = CFG_REGEN_T_SLEW * (scan_ms * 0.001f);
+  return current + util::limit(-step, cmd - current, step);
+}
+
+float brakeCurrent(float t_req, float omega) {
+  // foc_current is not optional for this mode: without a measured current the
+  // torque branch drives VOLTS, so a torque command would be interpreted as a
+  // voltage. control::update() refuses to arm in that case; this is the second
+  // line of the same defence.
+  if (!state::at_boot.isense_ok) { brakeReset(); return 0.0f; }
+
+  // Clamp against the LIVE current limit, not CFG_REGEN_T_MAX. 'LC' can move
+  // motor.current_limit at runtime, and state::safety.regen_iq_limit is derived
+  // from it, so a setpoint accepted against the compile-time ceiling could be
+  // cut downstream with nothing to explain the gap. Clamping here means the
+  // accepted torque is always one the stage can actually produce.
+  float t_max = io::motor::motor.current_limit * CFG_KT;
+  float T_cmd = util::limit(0.0f, t_req, t_max);
+  // util::limit is NaN-transparent and "<= 0" is false for NaN, so a NaN from a
+  // corrupted CAN frame would otherwise reach motor.current_sp - where both
+  // guards in app::foc are no-ops too. Filter it at the door.
+  if (!(T_cmd >= 0.0f)) T_cmd = 0.0f;
+
+  float w = fabsf(omega);
+
+  // Below the floor the sign of omega is quantisation rather than measurement,
+  // and this is also what leaves the shaft free when nothing drives it.
+  // Resetting the ramp on every exit, rather than just returning, means a
+  // re-engagement starts from 0 Nm and slews up instead of resuming whatever
+  // torque was applied before the shaft stopped.
+  if (w < CFG_REGEN_OMEGA_FLOOR) { brakeReset(); return 0.0f; }
+  if (!s_regen(w, CFG_REGEN_OMEGA_OFF, CFG_REGEN_OMEGA_ON)) { s_brake_t = 0.0f; return 0.0f; }
+#if !CFG_REGEN_BIDIRECTIONAL
+  if (omega <= 0.0f) { s_brake_t = 0.0f; return 0.0f; }
+#endif
+
+  s_brake_t = brakeRamp(s_brake_t, T_cmd, SCAN_MS_COMMS);
+  if (!(s_brake_t > 0.0f)) return 0.0f;
+
+  // copysign, not a division: unlike the power law this replaced, the magnitude
+  // does not depend on speed, so there is nothing to diverge as omega falls.
+  // omega can never be +/-0 here - the floor returned already, since
+  // fabsf(-0.0f) is +0.0f and that is below any positive floor.
+  float iq = -copysignf(s_brake_t / CFG_KT, omega);
+  iq *= util::limit(0.0f, (w - CFG_REGEN_OMEGA_ON) / CFG_REGEN_RAMP_BAND, 1.0f);
+
+  // Unreachable given the clamp on T_cmd above, kept as a backstop for a future
+  // edit that decouples the two. app::safety asserts the relationship so this
+  // cannot start silently absorbing a real difference.
+  return util::limit(-CFG_REGEN_I_MAX, iq, CFG_REGEN_I_MAX);
+}
+
 // ---------------------------------------------------------------------------
 }  // namespace
 
@@ -154,6 +242,14 @@ void updateSetpoint() {
       motor.controller     = MotionControlType::angle;
       state::control.active_target = AX.input_pos;
       break;
+    case CTRL_BRAKE:
+      // shaft_velocity is the MOTOR's, signed, in the sensor's own frame — the
+      // frame the torque command has to be in. The crank conversion happens in
+      // app::comms, on the way out, and must not leak into the law.
+      motor.controller = MotionControlType::torque;
+      state::control.active_target =
+          brakeCurrent(AX.input_brake, motor.shaft_velocity);
+      break;
     case CTRL_TORQUE:
     case CTRL_VOLTAGE:
     default:
@@ -206,11 +302,26 @@ void update() {
   if (!want && state::control.foc_ready) {
     state::control.foc_ready     = false;
     state::control.active_target = 0.0f;
+    // updateSetpoint() stops being called while disarmed, so the brake's slew
+    // state would survive the disarm and a re-arm onto a still-spinning shaft
+    // would reapply the old torque in one step - the exact jolt the slew exists
+    // to prevent.
+    brakeReset();
     motor.disable();
   }
 
   // --- ARM & CALIBRATE ---
   if (want && !state::control.foc_ready) {
+    // CTRL_BRAKE without current sensing would command volts where the law
+    // computed amps. Refuse the arm outright rather than energise the stage and
+    // rely on the guard inside brakeCurrent().
+    if (AX.control_mode == CTRL_BRAKE && !state::at_boot.isense_ok) {
+      AX.raiseError(ERR_INVALID_STATE);
+      AX.armed = false;
+      Serial.println("[!] Mode BRAKE indisponible: mesure de courant absente "
+                     "(foc_current requis). Rester en couple/vitesse.");
+      return;
+    }
     io::motor::enableStage();
     if (!state::control.calibrated) {
       if (CFG_PRECALIBRATED) {

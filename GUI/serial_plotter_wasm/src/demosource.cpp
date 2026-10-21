@@ -30,9 +30,10 @@ double noise(double amplitude)
 // SOURCE OF TRUTH: the CFG_PACK_VOLTAGE table in include/config/motor_config.h.
 //
 // This is a HAND-MAINTAINED COPY and it is the one place the demo can silently
-// drift from the firmware: the GUI is a desktop/WASM Qt build, its CMakeLists
-// does not put include/ on the path, and motor_config.h pulls in <Arduino.h> —
-// so the real macros cannot simply be included here.
+// drift from the firmware: motor_config.h pulls in <Arduino.h>, which a
+// desktop/WASM Qt build has no business providing, so the real macros cannot
+// simply be included here. (include/ itself IS on the path - see CMakeLists.txt
+// and tests/CMakeLists.txt - so the obstacle is only that header.)
 //
 // Mirroring the 24 V / PSU column. The derivations are the ones that table
 // documents, so setting kVbusNom to 36.0 or 48.0 tracks those columns:
@@ -51,6 +52,15 @@ constexpr double kBrakeOn  = 24.6 * kScale;      // CFG_BRAKE_VBUS_ON
 constexpr double kBrakeP   = 202.0;              // W the AUX resistor is sized for
 constexpr double kMaxDuty  = std::min(0.7, kBrakeP * kBrakeR / (kVbusNom * kVbusNom));
 constexpr double kGain     = 0.1 / (kScale * kScale);   // CFG_BRAKE_GAIN
+
+// ---- Gearbox ----------------------------------------------------------------
+// Hand-maintained copies too, for the same reason as the bus table above.
+// m_vel/m_pos below are MOTOR quantities; the board publishes the crank's, so
+// the demo divides on the way out exactly where src/app/comms.cpp does.
+constexpr double kGear     = 1.0;                // CFG_GEAR_RATIO
+constexpr double kKt       = 8.27 / 8.2;         // CFG_KT = 8.27 / CFG_KV
+constexpr double kRadsToRpm = 60.0 / 6.283185307179586;   // spelled out: M_PI is
+                                                          // not portable here
 
 } // namespace
 
@@ -133,10 +143,22 @@ void DemoSource::tick()
     // shared schema below, so a channel added there always appears here -- as
     // zero until it is given a value in this table. That is the whole reason
     // demo mode stopped drifting from the firmware's stream.
+    // Bilan de puissance et cadence. vel/pos sont publiés côté PÉDALIER par la
+    // carte (grandeur moteur / G), donc la démo divise ici, au même endroit que
+    // src/app/comms.cpp. p_elec suit le signe de Iq*vel : négatif en freinage.
+    const double velCrank = m_vel / kGear;
+    const double posCrank = m_pos / kGear;
+    const double pElec = kKt * m_iq * m_vel;
+    const double pRes  = ibrk * vbus;
+    const double pBat  = -pElec - pRes;
+    const double iBat  = (vbus > 1.0) ? pBat / vbus : 0.0;
+
     const struct { const char *key; double value; } kDemoValues[] = {
-        {"tgt", m_tgt}, {"Iq", m_iq},   {"vel", m_vel},   {"pos", m_pos},
-        {"Vbus", vbus}, {"Irgn", irgn}, {"Ibrk", ibrk},
-        {"blnd", blnd}, {"obsdV", obsdV},
+        {"tgt", m_tgt},  {"Iq", m_iq},   {"vel", velCrank}, {"pos", posCrank},
+        {"Vbus", vbus},  {"Irgn", irgn}, {"Ibrk", ibrk},
+        {"cad", velCrank * kRadsToRpm},
+        {"Pres", pRes},  {"Pbat", pBat}, {"Ibat", iBat},
+        {"blnd", blnd},  {"obsdV", obsdV},
     };
 
     QString line = QStringLiteral("t=%1 #%2 mode=1").arg(m_ms).arg(m_beat++);

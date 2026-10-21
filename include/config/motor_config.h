@@ -261,6 +261,164 @@
 #define CFG_BRAKE_P_PEAK_W  (CFG_BRAKE_MAX_DUTY * CFG_VBUS_NOMINAL * CFG_VBUS_NOMINAL / CFG_BRAKE_R)
 #define CFG_BRAKE_P_MAX_W   250.0f
 
+// Thermal rating of the AUX resistor, as opposed to CFG_BRAKE_P_MAX_W above
+// which is its PEAK rating. The two are different questions and both matter:
+// the peak decides whether a single braking event destroys the resistor, the
+// continuous decides whether an hour of pedalling does.
+//
+// This is the one that binds in PSU mode. A lab supply cannot sink current, so
+// EVERY watt the motor regenerates goes into the resistor, continuously, for as
+// long as the rider pedals — unlike a battery bus, where the chopper only fires
+// on the peaks. app::safety runs a first-order thermal model on the DISSIPATION
+// IT MEASURED and withdraws braking current before the resistor cooks.
+//
+// TAU is the resistor's thermal time constant: how long it takes to heat up.
+// 30 s is a conservative starting point for a wirewound element in still air —
+// too SHORT is the safe error (it derates sooner than it needs to). Measure it
+// on the bench against the real part before relaxing it.
+#define CFG_BRAKE_P_CONT         100.0f   // W the resistor takes CONTINUOUSLY
+#define CFG_BRAKE_THERMAL_TAU_S   30.0f   // s, first-order thermal time constant
+#define CFG_BRAKE_DERATE_START     0.8f   // fraction of the continuous rating
+                                          // where the derate starts biting
+
+// ---------------------------------------------------------------------------
+//  Gearbox — TELEMETRY ONLY
+// ---------------------------------------------------------------------------
+//  A speed-INCREASING box between the crank and the motor:
+//  omega_motor = CFG_GEAR_RATIO * omega_pedal.
+//
+//  /!\ THE FOC SENSOR IS ON THE MOTOR, and nothing here changes that. At G = 72
+//  a sensor mounted on the crank would give 72x fewer counts per motor
+//  revolution, which referred to the ELECTRICAL revolution (x CFG_POLE_PAIRS
+//  again) is unusable for commutation. This constant only converts published
+//  quantities from the motor frame into the rider's frame.
+//
+//  ASSUMES A RIGID COUPLING. If a freewheel is ever fitted between motor and
+//  crank, the derived cadence is wrong while it is coasting — the motor keeps
+//  spinning and the crank does not. Reading the real cadence would then need a
+//  second sensor, and there is no timer left for one: TIM1 = 6-PWM,
+//  TIM2 = brake chopper, TIM3 = motor sensor, TIM6 = FOC tick.
+// ---------------------------------------------------------------------------
+#define CFG_GEAR_RATIO   1.0f     // motor revolutions per crank revolution
+#define CFG_RPM2RADS     (2.0f * PI / 60.0f)
+
+// ---------------------------------------------------------------------------
+//  Constant counter-torque regenerative brake (CTRL_BRAKE)
+// ---------------------------------------------------------------------------
+//  The law is Iq = -copysign(T / Kt, omega): a braking torque of fixed
+//  MAGNITUDE whose SIGN always opposes rotation. The power extracted follows as
+//  T * omega, so it RISES with speed — the benign direction.
+//
+//  This replaced a constant-POWER law, Iq = -P / (Kt * omega), which failed on
+//  the bench. The history is kept because it is what justifies every guard
+//  below, and because the two halves of that failure had very different fates:
+//
+//    * The power law DIVERGED as omega -> 0, so the current command saturated at
+//      the limit across most of the usable speed range. Constant torque removes
+//      this half completely: the magnitude no longer depends on speed at all.
+//
+//    * THE SIGN PROBLEM SURVIVES, AND IT WAS THE DANGEROUS HALF. The command
+//      takes its sign from the sign of omega, so the threshold must sit where
+//      the velocity estimate RESOLVES ITS OWN SIGN. Below CFG_REGEN_OMEGA_FLOOR
+//      the hall estimate is quantisation, and a noise-signed command MOTORS the
+//      shaft in alternating directions instead of braking it. Measured, not
+//      theorised: the bus collapsed from 24 V to 6 V and the battery power read
+//      -8 W, i.e. drawing. Constant torque makes that failure QUIETER (a fixed
+//      magnitude instead of a saturated one) but no safer, so the floor, the
+//      hysteresis and the 20 kHz sign check in app::foc all stay exactly as
+//      they were.
+//
+//    * The same threshold is what makes the shaft genuinely FREE when nothing
+//      drives it: below it the torque is exactly zero, not merely small.
+// ---------------------------------------------------------------------------
+
+// Motor speed below which the velocity estimate cannot be trusted to carry a
+// SIGN, and therefore below which this mode must not engage. Derived from the
+// sensor, because the sensor is what sets it: the halls give 6*pole_pairs edges
+// per mechanical revolution and HallSensorSmoothVel averages over
+// CFG_HALL_VEL_WINDOW, so the estimate is built from
+// omega * 6 * pp * window / (2*pi) edges. Four is the fewest that gives a sign
+// worth acting on (at 26 pp / 50 ms that is 3.2 rad/s; two edges, 1.6 rad/s, is
+// where the sign starts flipping on noise). A quadrature encoder resolves this
+// far lower, hence the split.
+//
+// /!\ IT MUST BE STRICTLY POSITIVE, and app::safety asserts that. At omega
+// exactly +/-0 the sign of the command is meaningless AND both guards in
+// app::foc are no-ops, because x * 0 is neither > 0 nor < 0. A zero floor would
+// be the one speed where nothing at all protects the axis.
+#define CFG_REGEN_EDGES_MIN  4.0f
+#if SENSOR_TYPE == SENSOR_TYPE_HALL
+#define CFG_REGEN_OMEGA_FLOOR \
+  (CFG_REGEN_EDGES_MIN * TWO_PI / (6.0f * CFG_POLE_PAIRS * CFG_HALL_VEL_WINDOW))
+#else
+#define CFG_REGEN_OMEGA_FLOOR \
+  (CFG_REGEN_EDGES_MIN * TWO_PI / (4.0f * CFG_ENC_PPR * CFG_LPF_VEL_TF))
+#endif
+
+// Convert a crank cadence into the motor rad/s these thresholds want, for when
+// the rig's gearing is known. A HELPER, evaluated where it is written: it does
+// NOT make the thresholds track CFG_GEAR_RATIO at runtime. See the warning.
+#define CFG_REGEN_CRANK_RPM(rpm)  ((rpm) * CFG_RPM2RADS * CFG_GEAR_RATIO)
+
+//  /!\ THESE THRESHOLDS ARE IN MOTOR rad/s, AND DELIBERATELY NOT DERIVED FROM
+//      CFG_GEAR_RATIO. They were, once: expressed in crank rpm and multiplied
+//      through by G, which quietly made the gear ratio load-bearing for CONTROL
+//      while its own documentation promised it was telemetry only. Setting G to
+//      1 for a bench run then moved the engagement threshold by a factor of 72,
+//      from 15.1 rad/s down to 0.21 rad/s — far below the sign floor above.
+//      Under the constant-POWER law in force at the time the result was a
+//      command saturated at +/-4 A whose sign flipped every millisecond. The
+//      constant-torque law would no longer saturate there, but it would still
+//      flip, so the threshold discipline is unchanged. Keep these motor-side.
+//
+//  /!\ BENCH VALUES for the 26 pp / KV 8.2 hub motor, direct-drive (G = 1).
+//      4.5 rad/s is a SIGN-RESOLUTION threshold, chosen 40 % clear of the
+//      3.2 rad/s floor — not, as it was under the power law, to leave room
+//      before saturation. Constant torque has no saturation to avoid here.
+//      The usable window on this motor is 3.2 -> 20.2 rad/s (floor to
+//      CFG_BEMF_OMEGA_MAX), under a decade.
+//      With the pedal rig (G = 72) write CFG_REGEN_CRANK_RPM(15.0f) and friends
+//      — that lands at 113 rad/s, above THIS motor's back-EMF ceiling, so it
+//      needs the pedal motor. src/app/safety.cpp static_asserts both ends.
+#define CFG_REGEN_OMEGA_ON    4.5f   // rad/s MOTOR: the brake engages
+#define CFG_REGEN_OMEGA_OFF   3.4f   // rad/s MOTOR: it releases (hysteresis)
+#define CFG_REGEN_RAMP_BAND   2.0f   // rad/s MOTOR: width of the soft ramp
+
+#define CFG_REGEN_I_MAX          CFG_CURRENT_LIMIT   // A, braking current ceiling
+
+// Setpoint ceiling in Nm. DERIVED, not chosen: it is the stage's current limit
+// expressed as a torque, so the accepted command can never exceed what the
+// inverter delivers. brakeCurrent() clamps against the LIVE limit
+// (motor.current_limit, which the 'LC' command writes) rather than this
+// constant, so lowering LC lowers the accepted torque with it instead of
+// letting the command be silently cut downstream. This is the compile-time
+// bound the asserts and the boot banner use.
+#define CFG_REGEN_T_MAX          (CFG_REGEN_I_MAX * CFG_KT)
+
+// Slew limit on the brake torque setpoint (Nm/s). The same reason
+// CFG_VEL_ACCEL exists for the velocity setpoint: a step makes a bench supply
+// dip and then overshoot, and here it is felt through the shaft as a grab.
+// 8 Nm/s reaches the full setpoint in ~0.5 s, i.e. ~7.9 A/s — well inside the
+// 30 A/s CFG_VEL_RAMP already permits on the velocity PID's output. 0 disables.
+//
+// Distinct from CFG_REGEN_RAMP_BAND, which is not a rate: that one withdraws
+// torque as a function of SPEED as the shaft decelerates through the threshold.
+// One shapes a command change in time, the other shapes disengagement in speed.
+#define CFG_REGEN_T_SLEW         8.0f
+
+#define CFG_REGEN_BIDIRECTIONAL  1       // 0 = only brake when omega > 0
+
+// Speed at which the line back-EMF reaches CFG_VOLT_LIMIT. Past it the motor's
+// own EMF exceeds the bus, the free-wheel diodes rectify straight into the bus,
+// and the inverter no longer controls the current AT ALL — disarming makes it
+// worse, not better, because the gates are what was holding it off. This is a
+// property of the MOTOR and the PACK, not something firmware can enforce: a
+// rider can always pedal faster. It is asserted against the regen thresholds so
+// the brake can never be CONFIGURED to engage inside that region, and printed
+// in the boot banner next to the rest of the braking window.
+// KV is in rpm/V -> * 0.10472 for (rad/s)/V.
+#define CFG_BEMF_OMEGA_MAX  (CFG_VOLT_LIMIT * CFG_KV * 0.10472f)
+
 // Call rate of the bus-safety block (see PRG_SAFETY): the Vbus measurement is a
 // blocking ADC conversion -- no point doing it at 1 kHz (nothing on a battery
 // bus moves that fast), and it avoids stealing CPU from PRG_FOC (PRG_SAFETY's

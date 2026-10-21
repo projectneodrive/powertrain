@@ -42,7 +42,13 @@ struct Measured {
   float iq_setpoint_a = 0.0f;
   float iq_measured_a = 0.0f;
   float vbus_v        = 0.0f;
-  float ibus_a        = 0.0f;
+  float ibus_a        = 0.0f;   // MOTOR side, as ODrive documents Get_Bus_VI
+
+  // From the project's Get_Powers frame (0x01F): where the braking energy went.
+  // p_batt_w > 0 means the pack is charging. The battery CURRENT is not on the
+  // wire — it is p_batt / vbus, and both are already here.
+  float p_batt_w      = 0.0f;
+  float p_res_w       = 0.0f;
 
   // Answers to explicit requests (serial 'F'), not cyclic.
   uint32_t motor_error      = 0;
@@ -52,6 +58,7 @@ struct Measured {
   bool have_encoder = false;
   bool have_iq      = false;
   bool have_vbus    = false;
+  bool have_powers  = false;
 };
 
 // ---- what we told the board ------------------------------------------------
@@ -59,8 +66,15 @@ struct Commanded {
   uint8_t control_mode = odcan::CTRL_TORQUE;
   uint8_t input_mode   = INPUT_PASSTHROUGH;
 
-  // The ACTIVE setpoint, in the unit of control_mode — this is what the
-  // telemetry line reports as `tgt`, mirroring gvl::Q.active_target.
+  // The ACTIVE setpoint, in the unit of control_mode - this is what the
+  // telemetry line reports as `tgt`.
+  //
+  // /!\ It is NOT the same quantity the board reports under that name. The
+  // board's `tgt` is state::control.active_target, which in the torque-like
+  // modes is AMPS (it has already divided by Kt); this one is the commanded
+  // value in the mode's own unit - Nm for T and B, rad/s for V. The gap is
+  // easiest to miss in CTRL_BRAKE, where Kt ~= 1.0085 makes the two almost
+  // equal numerically. Compare `Iq` instead when the two ports disagree.
   float target = 0.0f;
 
   // And one per mode, kept separately because the console acknowledges
@@ -71,6 +85,7 @@ struct Commanded {
   float input_torque = 0.0f;   // Nm
   float input_vel    = 0.0f;   // rad/s
   float input_pos    = 0.0f;   // rad
+  float input_brake  = 0.0f;   // Nm, CTRL_BRAKE (counter-torque regen brake)
 
   // Set_Limits carries both at once, so both must be remembered to change one.
   float vel_limit     = CFG_VEL_LIMIT;

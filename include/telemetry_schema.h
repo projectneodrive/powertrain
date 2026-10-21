@@ -36,8 +36,11 @@
 
 TELEMETRY_CHANNEL(tgt,   "Target",        "#f97316", "",     2, state::control.active_target)
 TELEMETRY_CHANNEL(Iq,    "Iq [A]",        "#22c55e", "iq",   2, state::axis.iq_measured)
-TELEMETRY_CHANNEL(vel,   "Vel [rad/s]",   "#3b82f6", "",     2, state::axis.vel_rev * TWO_PI)
-TELEMETRY_CHANNEL(pos,   "Pos [rad]",     "#a855f7", "",     2, state::axis.pos_rev * TWO_PI)
+// vel/pos are CRANK-referenced (motor quantity / CFG_GEAR_RATIO) — see the
+// deviation note in src/app/comms.cpp. The velocity SETPOINT is not: 'V' and
+// CFG_VEL_LIMIT stay in motor rad/s, which is the frame the FOC controls in.
+TELEMETRY_CHANNEL(vel,   "Cadence [rad/s crank]", "#3b82f6", "", 2, state::axis.vel_rev * TWO_PI)
+TELEMETRY_CHANNEL(pos,   "Pos crank [rad]",       "#a855f7", "", 2, state::axis.pos_rev * TWO_PI)
 TELEMETRY_CHANNEL(Vbus,  "Vbus [V]",      "#ef4444", "vbus", 1, state::axis.vbus)
 
 // --- Braking energy balance --------------------------------------------------
@@ -56,6 +59,28 @@ TELEMETRY_CHANNEL(Irgn,  "Regen [A]",     "#06b6d4", "",     2,
                   (state::axis.ibus < 0.0f ? -state::axis.ibus : 0.0f))
 TELEMETRY_CHANNEL(Ibrk,  "Brake [A]",     "#eab308", "",     2,
                   (io::brake::duty() * state::axis.vbus / CFG_BRAKE_R))
+
+// --- Cadence and the bus energy balance --------------------------------------
+// cad  : what the rider reads on a bike computer. The same quantity as `vel`,
+//        in the unit the operator thinks in.
+// Pres : watts into the brake resistor. Ibrk is this as a current.
+// Pbat : watts left for the source once the resistor has taken its share,
+//        POSITIVE when the pack is charging. On a lab supply this should sit
+//        near zero in steady state — the supply cannot sink, so the chopper has
+//        to be absorbing everything. A Pbat that stays positive there means
+//        CFG_BRAKE_R is wrong or the AUX bridge is not conducting.
+// Ibat : Pbat as a current, for reading against the supply's own display.
+//
+// In CTRL_BRAKE the braking power is the setpoint times the speed, so Pres
+// should track B * omega_motor. That is a check against a known constant, which
+// is why there is no separate mechanical-power channel: under a constant-torque
+// law it would be a straight line through the origin carrying no information
+// `Iq` does not already carry.
+TELEMETRY_CHANNEL(cad,   "Cadence [rpm]", "#84cc16", "",     1,
+                  (state::axis.vel_rev * 60.0f))
+TELEMETRY_CHANNEL(Pres,  "P resistor [W]", "#f59e0b", "",    1, state::axis.p_res)
+TELEMETRY_CHANNEL(Pbat,  "P battery [W]", "#10b981", "",     1, state::axis.p_batt)
+TELEMETRY_CHANNEL(Ibat,  "I battery [A]", "#34d399", "",     2, state::axis.i_batt)
 
 // --- Sensorless observer (hall builds only) ----------------------------------
 // blnd : how much of the angle/velocity comes from the flux observer rather

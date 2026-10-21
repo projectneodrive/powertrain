@@ -68,6 +68,13 @@ struct AxisIO {
   volatile float    input_pos        = 0.0f;    // rad
   volatile float    input_vel        = 0.0f;    // rad/s
   volatile float    input_torque     = 0.0f;    // Nm
+  // CTRL_BRAKE setpoint: the MAGNITUDE of the braking torque, in Nm. Always
+  // >= 0 — the direction is not the caller's to choose, it is taken from the
+  // rotation so the torque always opposes it. Kept apart from input_torque
+  // although both are Nm: that one is a signed motor torque that may drive,
+  // this one cannot, and the console acknowledges each against its own previous
+  // value. On CAN it shares the Set_Input_Torque frame; see odrive_can.cpp.
+  volatile float    input_brake      = 0.0f;    // Nm
   volatile float    vel_limit        = 0.0f;    // rad/s
   volatile float    current_limit    = 0.0f;    // A
   volatile float    pos_gain         = 0.0f;    // (rad/s)/rad  — P_angle.P (cmd G/PP)
@@ -94,7 +101,21 @@ struct AxisIO {
   volatile float    iq_setpoint = 0.0f;         // A
   volatile float    iq_measured = 0.0f;         // A
   volatile float    vbus        = 0.0f;         // V
-  volatile float    ibus        = 0.0f;         // A
+  volatile float    ibus        = 0.0f;         // A, MOTOR side (p_elec / vbus)
+
+  // DC-bus energy balance, published by app::comms. Three places the power can
+  // be, and they must add up: what the motor exchanges with the bus (ibus,
+  // above), what the brake resistor burns (p_res), and what is left for the
+  // source (p_batt). Sign convention on the last two is the BATTERY's:
+  // p_batt > 0 means the pack is being charged.
+  //
+  // On a lab supply p_batt should sit near zero in steady state — the supply
+  // cannot sink, so the chopper has to be taking everything. A p_batt that
+  // stays positive there means CFG_BRAKE_R is wrong or the AUX half-bridge is
+  // not conducting, and the bus voltage is the one telling the truth.
+  volatile float    i_batt      = 0.0f;         // A, + = charging
+  volatile float    p_batt      = 0.0f;         // W, + = charging
+  volatile float    p_res       = 0.0f;         // W, into the brake resistor
   volatile uint32_t axis_error  = 0;            // ORed AxisErrorBits
   volatile uint8_t  cur_state   = AXIS_IDLE;    // current AxisState
 

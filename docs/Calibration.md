@@ -231,6 +231,104 @@ through the handoff.
 
 ---
 
+## Step 7 — the counter‑torque brake *(CTRL_BRAKE, optional)*
+
+`B<Nm>` puts the axis in `CTRL_BRAKE`: it applies a braking torque of that
+magnitude whose **sign always opposes rotation**. It never drives — stop turning
+the shaft and the torque goes to zero.
+
+> This replaced a constant-**power** mode (`W<watts>`, `Iq = -P/(Kt·ω)`). That law
+> diverged as ω → 0: it saturated at the current limit across most of the usable
+> range, and because its sign came from the sign of ω it flipped on hall
+> quantisation noise — motoring the shaft in alternating directions and collapsing
+> the bus from 24 V to 6 V. Constant torque removes the divergence. **It does not
+> remove the sign problem**, which is why every threshold below still matters.
+
+**Prerequisites:** current sense active (the board refuses to arm in this mode
+without it). `CFG_GEAR_RATIO` affects only the cadence telemetry, not the brake.
+
+### The speed window
+
+Three numbers bound the mode, all in **motor rad/s**, all printed at boot on the
+`[brake]` line and by `Q`:
+
+| | Comes from | On the motor fitted today |
+|---|---|---|
+| `CFG_REGEN_OMEGA_FLOOR` | the sensor: 4 hall edges inside `CFG_HALL_VEL_WINDOW` | 3.22 rad/s |
+| `CFG_REGEN_OMEGA_ON` / `_OFF` | your choice, clear of the floor | 4.5 / 3.4 rad/s |
+| `CFG_BEMF_OMEGA_MAX` | the motor and the pack | 20.2 rad/s |
+
+The **floor** is the one that is not negotiable. The braking current takes its
+sign from the sign of ω, so below the speed at which the velocity estimate
+resolves its own sign that current is a full-magnitude command pointing in a
+random direction. `src/app/safety.cpp` static_asserts `OMEGA_ON` against it, and
+the law refuses below it regardless of configuration.
+
+The **ceiling** is where the line back-EMF reaches the bus: past it the
+free-wheel diodes rectify into the bus and the inverter has no authority at all
+— disarming makes it worse, not better, because the gates were what held it off.
+
+These thresholds are deliberately **not** derived from `CFG_GEAR_RATIO`. Making
+them scale with it once turned a bench run at `G = 1` into a 72× threshold change
+and the oscillation described above. To set them from a target cadence, write
+`CFG_REGEN_CRANK_RPM(15.0f)`, which evaluates where you write it.
+
+### What the setpoint buys you
+
+Unlike the power law, the torque is delivered **exactly** and the envelope is no
+longer speed-dependent: any value up to `CFG_REGEN_T_MAX` holds at any speed in
+the window. That ceiling is the current limit expressed as a torque
+(`CFG_REGEN_I_MAX · Kt` ≈ 4.03 Nm), and the law clamps against the **live** limit,
+so lowering `LC` lowers the accepted torque with it.
+
+What does rise with speed is the **power**, `P = T·ω`. At full setpoint near the
+top of the window that is ~80 W into the resistor — close to
+`CFG_BRAKE_P_CONT` = 100 W, so this is the mode where the thermal derate actually
+shows up. Setpoint changes are slew-limited by `CFG_REGEN_T_SLEW` (8 Nm/s, ~0.5 s
+to full) so a step does not jolt the shaft or spike the bus.
+
+### Bench procedure
+
+1. `Q` — check `regen_t_max`, `regen_t_slew`, `regen_on`, `regen_off`,
+   `regen_floor`, `bemf_omega_max`. Compare against the boot `[brake]` line.
+2. `A` with the shaft at rest: `Iq` must read `0.00`, and **the shaft must turn
+   freely by hand**. That is the "no movement without an external force"
+   requirement, and it is the floor delivering it.
+3. `V12` to spin up, then `B1.0`. `Iq` should settle at ≈ −0.99 A and **stay
+   there** as the speed decays — a flat line, not the ±4 A square wave the power
+   law produced. `Iq` must always be opposite in sign to `vel`.
+4. `B4`, then `B0`: the change should take ~0.5 s, not one sample. Then `I` and
+   `A` again while the shaft still turns — the torque must restart from zero and
+   ramp, not snap back to the old value.
+5. Let it coast down. Between ~6.5 and 4.5 rad/s the torque should withdraw
+   **gradually** (that is `CFG_REGEN_RAMP_BAND`), then be exactly zero below
+   `CFG_REGEN_OMEGA_OFF`, with no chatter around the threshold.
+6. `B0` and `B-2` must both give zero torque.
+7. **Energy balance.** `Pres` should track `B · ω_motor` — a check against a
+   number you chose, which is why no mechanical-power channel is needed. On a lab
+   supply `Pbat` should sit near zero: the supply cannot sink, so the chopper has
+   to be taking everything. A `Pbat` that stays positive means `CFG_BRAKE_R` is
+   wrong or the AUX half-bridge is not conducting — `Vbus` arbitrates.
+8. **Thermal derate.** Hold `B4` at ~18 rad/s (≈ 80 W) for a minute or two:
+   `Irgn` must fall away smoothly as the model withdraws braking current, with no
+   fault and no step the shaft can feel. It recovers over
+   `CFG_BRAKE_THERMAL_TAU_S`.
+
+> The resistor thermal model is the one thing here no voltage reading can check
+> for you. In PSU mode the chopper holds `Vbus` flat while burning power
+> continuously, so the bus looks perfectly healthy right up until the resistor
+> fails. Set `CFG_BRAKE_P_CONT` from the part's datasheet, not from the peak
+> rating `CFG_BRAKE_P_MAX_W`.
+
+**Known limitation.** The dead zone is `CFG_REGEN_OMEGA_ON` = 4.5 rad/s, i.e.
+43 rpm at the motor in direct drive — noticeable if you turn the shaft slowly by
+hand. Geared at `G = 72` that is 0.6 rpm of cadence, so it is negligible on the
+pedal rig. Going lower would mean deriving direction from the **hall sector
+transitions** (resolved on the first edge, ~0.04 rad) rather than from the
+velocity estimate.
+
+---
+
 ## Quick reference — one full example (`config/motor_config.h`)
 
 ```c

@@ -106,7 +106,7 @@ void run() {
 | 6 | `io::motor::init()` | Sensor → driver → current sense → motor parameters. Sets `state::at_boot.isense_ok` |
 | 7 | `io::brake::init()` | **After** the DRV reset: GVDD powers the LM5109B, and only exists once the DRV8301 is awake |
 | 8 | `io::vbus::init()` | **After** `motor::init()`: it takes whichever ADC the current sense did not claim |
-| 9 | banner: brake/regen/OV thresholds | Prints the actual ladder in force, so a mis-set threshold is visible at boot |
+| 9 | banner: brake/regen/OV thresholds + the CTRL_BRAKE speed window | Prints the actual ladder in force, so a mis-set threshold is visible at boot |
 | 10 | `io::can::init()` | Node id, bit rate, IRQ priority (see §10.3) |
 
 ### 2.2 Cold start before tasks exist

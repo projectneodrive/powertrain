@@ -9,8 +9,11 @@
 //
 // A key here MUST NOT appear in console_commands.h. Nothing stops you at
 // compile time (the tables are built independently), so bridge_console.cpp
-// checks at boot and complains loudly on the console instead. The free letters
-// at the time of writing were B D E F N O R S U W Y Z.
+// checks at boot and complains loudly on the console instead. Because that is a
+// log line and not a compile error, a double-booked key would ship -- so keep
+// this list current when either table changes.
+// Taken across BOTH tables as of this writing: A B C D E F G H I J K L M P Q R
+// T V X Z (plus '?'). Free: N O S U W Y.
 //
 // Two kinds of command live here, and it is worth knowing which is which:
 //

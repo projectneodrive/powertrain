@@ -73,6 +73,20 @@ void cmdPosition(float v) {
   io::console::ackFloat("X", "pos", old, v, 3, "rad");
 }
 
+// Constant counter-torque regenerative brake. The setpoint is clamped
+// non-negative here, at the entry point: the sign is the law's to decide (it
+// opposes rotation), and the law is written on the assumption it never sees a
+// negative magnitude. The torque actually reached is slew-limited and also
+// bounded by the live current limit, so the ack is a REQUEST, not a promise —
+// compare it against Iq.
+void cmdBrake(float v) {
+  float old = state::axis.input_brake;
+  state::axis.control_mode = CTRL_BRAKE;
+  state::axis.input_brake  = (v > 0.0f) ? v : 0.0f;
+  state::axis.last_setpoint_ms = millis();
+  io::console::ackFloat("B", "brake", old, state::axis.input_brake, 2, "Nm");
+}
+
 void cmdCharacterise(float) {
   state::axis.req_characterise = true;
   io::console::ackMsg("M", "characterise requested");
